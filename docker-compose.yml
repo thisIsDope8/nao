@@ -33,7 +33,8 @@ services:
             # =================================================================
             # Authentication & API Keys
             # =================================================================
-            BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
+            BETTER_AUTH_URL: http://10.132.134.98:5005
+            BETTER_AUTH_SECRET: q1w2e3r4t5y6u7i8o9p0
             OPENAI_API_KEY: ${OPENAI_API_KEY}
             ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
 
@@ -47,8 +48,8 @@ services:
             # =================================================================
             # Option A: Local mode (default) - uses bundled example or volume mount
             NAO_CONTEXT_SOURCE: local
-            NAO_DEFAULT_PROJECT_PATH: /app/example
-
+            NAO_DEFAULT_PROJECT_PATH: /opt/nao-projects/example
+           
             # Option B: Git mode - uncomment and configure these instead:
             # NAO_CONTEXT_SOURCE: git
             # NAO_CONTEXT_GIT_URL: https://github.com/your-org/your-nao-context.git
@@ -59,7 +60,7 @@ services:
             # Optional: Schedule periodic git pull (cron expression)
             # NAO_REFRESH_SCHEDULE: "0 * * * *"  # Every hour
         volumes:
-            - ${NAO_DEFAULT_PROJECT_PATH}:/app/example
+            - /opt/nao-projects/example:/opt/nao-projects/example
         depends_on:
             - postgres
 
