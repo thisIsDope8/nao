@@ -82,6 +82,7 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.o
     fontconfig \
     fonts-dejavu-core \
     git \
+    libmariadb3 \
     libpq5 \
     supervisor \
     unixodbc \
