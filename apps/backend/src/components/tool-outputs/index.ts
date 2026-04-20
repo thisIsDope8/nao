@@ -10,6 +10,8 @@ export { ListOutput } from './list';
 export { ReadOutput } from './read';
 export { SearchOutput } from './search';
 export { StoryOutput } from './story';
+export { WebFetchOutput } from './web-fetch';
+export { WebSearchOutput } from './web-search';
 
 /** Renders a tool output component to markdown for the model, falling back to JSON if the result is empty. */
 export function renderToModelOutput(node: ReactNode, fallback: unknown): ToolResultOutput {

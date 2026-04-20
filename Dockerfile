@@ -67,6 +67,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # STAGE 5: Runtime image
 # =============================================================================
 FROM python:3.12-slim AS runtime
+ENV HTTP_PROXY=http://proxy.nioint.com:8080
+ENV HTTPS_PROXY=http://proxy.nioint.com:8080
+ENV http_proxy=http://proxy.nioint.com:8080
+ENV https_proxy=http://proxy.nioint.com:8080
 
 ARG APP_VERSION=dev
 ARG APP_COMMIT=unknown

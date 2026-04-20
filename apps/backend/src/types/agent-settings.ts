@@ -1,4 +1,4 @@
-export type WebSearchMode = 'provider';
+export type WebSearchMode = 'provider' | 'custom';
 
 export interface AgentSettings {
 	memoryEnabled?: boolean;

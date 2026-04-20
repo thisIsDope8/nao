@@ -3,7 +3,9 @@ import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createOpenAI } from '@ai-sdk/openai';
 import type { LlmProvider } from '@nao/shared/types';
 
+import type { WebSearchMode } from '../../types/agent-settings';
 import type { ProviderSettings } from '../../types/llm';
+import { createCustomWebSearchTools } from './web-search-custom';
 
 type ProviderToolCreator = (settings: ProviderSettings) => unknown;
 
@@ -19,10 +21,28 @@ const WEB_FETCH_CREATORS: Partial<Record<LlmProvider, ProviderToolCreator>> = {
 
 export const WEB_SEARCH_PROVIDERS = new Set(Object.keys(WEB_SEARCH_CREATORS) as LlmProvider[]);
 
+export function resolveWebSearchMode(provider: LlmProvider, configuredMode?: WebSearchMode): WebSearchMode {
+	// console.log('resolveWebSearchMode: ', provider, configuredMode);
+	// if (configuredMode) {
+	// 	return configuredMode;
+	// }
+
+	return provider === 'openaiCompatible' ? 'custom' : 'provider';
+}
+
 export function createWebSearchTools(
 	provider: LlmProvider,
-	settings: ProviderSettings,
+	mode: WebSearchMode,
+	settings?: ProviderSettings,
 ): Record<string, unknown> | null {
+	if (mode === 'custom') {
+		return createCustomWebSearchTools();
+	}
+
+	if (!settings) {
+		return null;
+	}
+
 	const searchCreator = WEB_SEARCH_CREATORS[provider];
 	if (!searchCreator) {
 		return null;

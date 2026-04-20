@@ -34,7 +34,10 @@ function parseOutput(output: unknown): WebSearchAction {
 		if (action?.type === 'search' && Array.isArray(obj.sources)) {
 			const sources = obj.sources
 				.filter((s: Record<string, unknown>) => s?.url)
-				.map((s: Record<string, unknown>) => ({ url: s.url as string }));
+				.map((s: Record<string, unknown>) => ({
+					url: s.url as string,
+					title: (s.title as string | null) ?? null,
+				}));
 			return { type: 'search', sources };
 		}
 	}

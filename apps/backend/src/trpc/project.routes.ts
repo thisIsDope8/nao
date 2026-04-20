@@ -655,7 +655,7 @@ export const projectRoutes = {
 				webSearch: z
 					.object({
 						enabled: z.boolean().optional(),
-						mode: z.enum(['provider']).optional(),
+						mode: z.enum(['provider', 'custom']).optional(),
 					})
 					.optional(),
 			}),

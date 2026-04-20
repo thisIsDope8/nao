@@ -19,7 +19,7 @@ import { z } from 'zod';
 
 import { CACHE_1H, CACHE_5M, LLM_PROVIDERS, ProviderModelResult } from '../agents/providers';
 import { getTools } from '../agents/tools';
-import { createWebSearchTools } from '../agents/tools/web-search';
+import { createWebSearchTools, resolveWebSearchMode } from '../agents/tools/web-search';
 import { getConnections, getTableColumnsContent, getUserRules } from '../agents/user-rules';
 import { ChatForkContextPrompt, MessagingProviderSystemPrompt, SystemPrompt } from '../components/ai';
 import { DBChat } from '../db/abstractSchema';
@@ -86,6 +86,7 @@ export class AgentService {
 	}
 
 	async create(chat: AgentChat, modelSelection?: LlmSelectedModel): Promise<AgentManager> {
+		console.log('create: ', chat, modelSelection);
 		this._disposeAgent(chat.id);
 		const resolvedLlmSelectedModel = await this._getResolvedLlmSelectedModel(chat.projectId, modelSelection);
 		await assertBudgetNotExceeded(chat.projectId, resolvedLlmSelectedModel.provider);
@@ -174,11 +175,18 @@ export class AgentService {
 		if (!agentSettings?.webSearch?.enabled) {
 			return null;
 		}
+
+		const mode = resolveWebSearchMode(provider, agentSettings.webSearch.mode);
+		console.log('mode', mode);
+		if (mode === 'custom') {
+			return createWebSearchTools(provider, mode);
+		}
+
 		const settings = await resolveProviderSettings(projectId, provider);
 		if (!settings) {
 			return null;
 		}
-		return createWebSearchTools(provider, settings);
+		return createWebSearchTools(provider, mode, settings);
 	}
 
 	protected async _getModelConfig(projectId: string, modelSelection: LlmSelectedModel): Promise<ProviderModelResult> {
