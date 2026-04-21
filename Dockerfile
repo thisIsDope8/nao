@@ -67,10 +67,6 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 # STAGE 5: Runtime image
 # =============================================================================
 FROM python:3.12-slim AS runtime
-ENV HTTP_PROXY=http://proxy.nioint.com:8080
-ENV HTTPS_PROXY=http://proxy.nioint.com:8080
-ENV http_proxy=http://proxy.nioint.com:8080
-ENV https_proxy=http://proxy.nioint.com:8080
 
 ARG APP_VERSION=dev
 ARG APP_COMMIT=unknown
@@ -143,6 +139,12 @@ ENV APP_BUILD_DATE=$APP_BUILD_DATE
 ENV NAO_DEFAULT_PROJECT_PATH=/app/example
 ENV NAO_CONTEXT_SOURCE=local
 ENV DOCKER=1
+ENV HTTP_PROXY=http://proxy.nioint.com:8080
+ENV HTTPS_PROXY=http://proxy.nioint.com:8080
+ENV http_proxy=http://proxy.nioint.com:8080
+ENV https_proxy=http://proxy.nioint.com:8080
+ENV NO_PROXY=localhost,127.0.0.1,::1
+ENV no_proxy=localhost,127.0.0.1,::1
 
 EXPOSE 5005
 
