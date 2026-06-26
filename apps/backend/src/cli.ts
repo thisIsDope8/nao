@@ -9,6 +9,7 @@
  */
 
 import './env';
+import './instrumentation';
 
 import crypto from 'crypto';
 import fs from 'fs';

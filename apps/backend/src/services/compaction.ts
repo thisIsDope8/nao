@@ -14,6 +14,7 @@ import {
 	findLastUserMessageIndex,
 } from '../utils/ai';
 import { debugCompaction } from '../utils/debug';
+import { withLangfuseTrace } from '../utils/langfuse';
 import { resolveAnnotationModelId, resolveProviderModel } from '../utils/llm';
 import { scheduleSaveLlmInferenceRecord } from '../utils/schedule-task';
 import { ITokenCounter, TokenCounter } from './token-counter';
@@ -190,7 +191,15 @@ export class CompactionService {
 		}
 
 		const messagesToSummarize = opts.messages.slice(firstNonSystemIndex, lastUserIndex);
-		const { summary, usage } = await llm.compact(messagesToSummarize);
+		const { summary, usage } = await withLangfuseTrace(
+			{
+				userId: opts.chat.userId,
+				sessionId: opts.chat.id,
+				tags: ['nao', 'compaction'],
+				metadata: { projectId: opts.chat.projectId },
+			},
+			() => llm.compact(messagesToSummarize),
+		);
 
 		this._replaceCompactedMessages(
 			opts.messages,

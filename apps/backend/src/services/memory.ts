@@ -14,6 +14,7 @@ import type {
 	UserMemory,
 	UserProfile,
 } from '../types/memory';
+import { withLangfuseTrace } from '../utils/langfuse';
 import { resolveAnnotationModelId, resolveProviderModel } from '../utils/llm';
 import { logger } from '../utils/logger';
 import { posthog, PostHogEvent } from './posthog';
@@ -69,7 +70,15 @@ class MemoryService {
 
 		const existingMemories = await memoryQueries.getUserMemories(opts.userId);
 		const extractor = new MemoryExtractorLLM(model);
-		const extractorResult = await extractor.extract(existingMemories, opts.messages);
+		const extractorResult = await withLangfuseTrace(
+			{
+				userId: opts.userId,
+				sessionId: opts.chatId,
+				tags: ['nao', 'memory-extraction'],
+				metadata: { projectId: opts.projectId },
+			},
+			() => extractor.extract(existingMemories, opts.messages),
+		);
 		if (!extractorResult) {
 			return;
 		}

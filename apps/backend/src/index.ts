@@ -1,3 +1,5 @@
+import './instrumentation';
+
 import { startServer } from './app';
 
 startServer({ port: 5005, host: '0.0.0.0' }).catch((err) => {

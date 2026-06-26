@@ -4,6 +4,7 @@ import { z } from 'zod/v4';
 
 import type { UIMessage } from '../types/chat';
 import type { ModelCosts } from '../types/llm';
+import { langfuseTelemetry } from '../utils/langfuse';
 import { AgentRunResult, AgentService } from './agent';
 
 type VerificationData = Record<string, string | number | boolean | null>[] | null;
@@ -67,6 +68,7 @@ export class TestAgentService extends AgentService {
 			...modelConfig,
 			output: Output.object({ schema }),
 			messages,
+			...langfuseTelemetry('nao-test-verification', { projectId }),
 		});
 
 		return { data: result.output.data ?? null };

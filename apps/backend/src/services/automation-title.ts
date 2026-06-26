@@ -3,6 +3,7 @@ import { z } from 'zod';
 
 import { LLM_PROVIDERS, type ProviderModelResult } from '../agents/providers';
 import * as llmConfigQueries from '../queries/project-llm-config.queries';
+import { langfuseTelemetry } from '../utils/langfuse';
 import { resolveProviderModel } from '../utils/llm';
 
 const FALLBACK_TITLE = 'Untitled automation';
@@ -29,6 +30,7 @@ export async function inferAutomationTitle(projectId: string, prompt: string): P
 				}),
 			}),
 			maxOutputTokens: 60,
+			...langfuseTelemetry('nao-automation-title', { projectId }),
 		});
 
 		const inferred = output?.title?.trim();

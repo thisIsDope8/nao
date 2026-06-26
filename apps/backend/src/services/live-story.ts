@@ -10,6 +10,7 @@ import * as projectQueries from '../queries/project.queries';
 import * as llmConfigQueries from '../queries/project-llm-config.queries';
 import { getQueryDataFromCode } from '../queries/shared-story.queries';
 import * as storyQueries from '../queries/story.queries';
+import { langfuseTelemetry } from '../utils/langfuse';
 import { getDefaultModelId, resolveProviderModel } from '../utils/llm';
 import { MAX_OUTPUT_TOKENS } from './agent';
 const MAX_RENDERED_ROWS = 60;
@@ -190,6 +191,7 @@ async function generateDynamicStoryCode(
 				}),
 			}),
 			maxOutputTokens: MAX_OUTPUT_TOKENS,
+			...langfuseTelemetry('nao-live-story', { projectId }),
 		});
 
 		const candidate = stripCodeFence(output.code.trim());

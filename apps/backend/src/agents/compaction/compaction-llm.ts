@@ -6,6 +6,7 @@ import { ITokenCounter } from '../../services/token-counter';
 import { CompactionResult, ICompactionLLM } from '../../types/compaction';
 import { convertToTokenUsage, selectMessagesInBudget } from '../../utils/ai';
 import { debugCompaction } from '../../utils/debug';
+import { langfuseTelemetry } from '../../utils/langfuse';
 import { stripImageParts } from '../../utils/model-message';
 import { type ProviderModelResult } from '../providers';
 
@@ -30,6 +31,7 @@ export class CompactionLLM implements ICompactionLLM {
 			...this._model,
 			messages: modelMessages,
 			maxOutputTokens: MAX_OUTPUT_TOKENS,
+			...langfuseTelemetry('nao-compaction'),
 		});
 
 		return { summary: text, usage: convertToTokenUsage(usage) };

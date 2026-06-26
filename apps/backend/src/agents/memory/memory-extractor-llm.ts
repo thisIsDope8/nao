@@ -8,6 +8,7 @@ import type { ExtractorLLMOutput } from '../../types/memory';
 import { ExtractorOutputSchema } from '../../types/memory';
 import { convertToTokenUsage, findLastUserMessage, getLastUserMessageText, joinAllTextParts } from '../../utils/ai';
 import { debugMemory } from '../../utils/debug';
+import { langfuseTelemetry } from '../../utils/langfuse';
 import { truncateMiddle } from '../../utils/utils';
 import { type ProviderModelResult } from '../providers';
 
@@ -42,6 +43,7 @@ export class MemoryExtractorLLM {
 			output: Output.object({ schema: ExtractorOutputSchema }),
 			messages: modelMessages,
 			maxOutputTokens: 4000,
+			...langfuseTelemetry('nao-memory-extraction'),
 		});
 
 		debugMemory('output', output);

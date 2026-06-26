@@ -4,6 +4,7 @@ import { z } from 'zod';
 
 import { LLM_PROVIDERS, type ProviderModelResult } from '../agents/providers';
 import * as llmConfigQueries from '../queries/project-llm-config.queries';
+import { langfuseTelemetry } from '../utils/langfuse';
 import { resolveProviderModel } from '../utils/llm';
 
 export async function naturalLanguageToCron(projectId: string, text: string): Promise<string | null> {
@@ -34,6 +35,7 @@ export async function naturalLanguageToCron(projectId: string, text: string): Pr
 				}),
 			}),
 			maxOutputTokens: 60,
+			...langfuseTelemetry('nao-cron-nlp', { projectId }),
 		});
 
 		const cron = output?.cron?.trim();

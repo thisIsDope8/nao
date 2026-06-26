@@ -54,6 +54,7 @@ import {
 } from '../utils/ai';
 import { assertBudgetNotExceeded } from '../utils/budget';
 import { HandlerError } from '../utils/error';
+import { langfuseTelemetry, type LangfuseTraceContext,withLangfuseTrace } from '../utils/langfuse';
 import {
 	getDefaultModelId,
 	getEnvModelSelections,
@@ -327,7 +328,27 @@ class AgentManager {
 			prepareStep: async ({ messages }) => this._prepareStep(messages),
 			stopWhen,
 			experimental_context: this._toolContext,
+			...langfuseTelemetry('nao-agent', {
+				chatId: chat.id,
+				projectId: chat.projectId,
+				userId: chat.userId,
+				modelId: _modelSelection.modelId,
+				provider: _modelSelection.provider,
+			}),
 		});
+	}
+
+	private _langfuseContext(): LangfuseTraceContext {
+		return {
+			userId: this.chat.userId,
+			sessionId: this.chat.id,
+			tags: ['nao'],
+			metadata: {
+				projectId: this.chat.projectId,
+				modelId: this._modelSelection.modelId,
+				provider: this._modelSelection.provider,
+			},
+		};
 	}
 
 	private async _prepareStep(messages: ModelMessage[]): Promise<{ messages: ModelMessage[] }> {
@@ -389,48 +410,50 @@ class AgentManager {
 		return createUIMessageStream<UIMessage>({
 			generateId: () => crypto.randomUUID(),
 			execute: async ({ writer }) => {
-				writer.write({ type: 'start' });
+				await withLangfuseTrace(this._langfuseContext(), async () => {
+					writer.write({ type: 'start' });
 
-				if (opts.events?.newChat) {
-					writer.write({
-						type: 'data-newChat',
-						data: opts.events.newChat,
+					if (opts.events?.newChat) {
+						writer.write({
+							type: 'data-newChat',
+							data: opts.events.newChat,
+						});
+					}
+
+					if (opts.events?.newUserMessage) {
+						writer.write({
+							type: 'data-newUserMessage',
+							data: opts.events.newUserMessage,
+						});
+					}
+
+					this._streamWriter = writer;
+					const messages = await this._buildModelMessages(
+						uiMessages,
+						opts.mentions,
+						opts.provider,
+						opts.timezone,
+						opts.chatUrl,
+					);
+
+					result = await this._agent.stream({
+						messages,
+						abortSignal: this._abortController.signal,
 					});
-				}
 
-				if (opts.events?.newUserMessage) {
-					writer.write({
-						type: 'data-newUserMessage',
-						data: opts.events.newUserMessage,
-					});
-				}
+					// Extract memory immediately after the request to the agent is sent
+					this._scheduleMemoryExtraction(uiMessages);
 
-				this._streamWriter = writer;
-				const messages = await this._buildModelMessages(
-					uiMessages,
-					opts.mentions,
-					opts.provider,
-					opts.timezone,
-					opts.chatUrl,
-				);
+					if (opts.events?.newChat) {
+						this._scheduleTitleGeneration(getLastUserMessageText(uiMessages));
+					}
 
-				result = await this._agent.stream({
-					messages,
-					abortSignal: this._abortController.signal,
+					writer.merge(
+						result.toUIMessageStream({
+							sendStart: false,
+						}),
+					);
 				});
-
-				// Extract memory immediately after the request to the agent is sent
-				this._scheduleMemoryExtraction(uiMessages);
-
-				if (opts.events?.newChat) {
-					this._scheduleTitleGeneration(getLastUserMessageText(uiMessages));
-				}
-
-				writer.merge(
-					result.toUIMessageStream({
-						sendStart: false,
-					}),
-				);
 			},
 			onError: (err) => {
 				error = err;
@@ -636,6 +659,11 @@ class AgentManager {
 				}),
 			}),
 			maxOutputTokens: 60,
+			...langfuseTelemetry('nao-title', {
+				chatId: this.chat.id,
+				projectId: this.chat.projectId,
+				userId: this.chat.userId,
+			}),
 		});
 
 		const title = output?.title.trim();
@@ -677,48 +705,50 @@ class AgentManager {
 			costs?: ModelCosts;
 		} = {},
 	): Promise<AgentRunResult> {
-		const startTime = performance.now();
-		const messages = await this._buildModelMessages(
-			uiMessages,
-			undefined,
-			opts.provider,
-			opts.timezone,
-			opts.chatUrl,
-		);
-		try {
-			const result = await this._agent.generate({
-				messages,
-				abortSignal: this._abortController.signal,
-			});
-			const durationMs = Math.round(performance.now() - startTime);
-
-			const usage = convertToTokenUsage(result.totalUsage);
-			const customModels = await llmConfigQueries
-				.getProjectLlmConfigByProvider(this.chat.projectId, this._modelSelection.provider)
-				.then((c) => c?.customModels ?? [])
-				.catch(() => []);
-			const cost = convertToCost(
-				usage,
-				this._modelSelection.provider,
-				this._modelSelection.modelId,
-				customModels,
-				opts.costs,
+		return withLangfuseTrace(this._langfuseContext(), async () => {
+			const startTime = performance.now();
+			const messages = await this._buildModelMessages(
+				uiMessages,
+				undefined,
+				opts.provider,
+				opts.timezone,
+				opts.chatUrl,
 			);
-			const finishReason = result.finishReason ?? 'stop';
+			try {
+				const result = await this._agent.generate({
+					messages,
+					abortSignal: this._abortController.signal,
+				});
+				const durationMs = Math.round(performance.now() - startTime);
 
-			return {
-				text: result.text,
-				usage,
-				cost,
-				finishReason,
-				durationMs,
-				responseMessages: result.response.messages,
-				steps: result.steps as AgentRunResult['steps'],
-				responseParts: [],
-			};
-		} finally {
-			this._onDispose();
-		}
+				const usage = convertToTokenUsage(result.totalUsage);
+				const customModels = await llmConfigQueries
+					.getProjectLlmConfigByProvider(this.chat.projectId, this._modelSelection.provider)
+					.then((c) => c?.customModels ?? [])
+					.catch(() => []);
+				const cost = convertToCost(
+					usage,
+					this._modelSelection.provider,
+					this._modelSelection.modelId,
+					customModels,
+					opts.costs,
+				);
+				const finishReason = result.finishReason ?? 'stop';
+
+				return {
+					text: result.text,
+					usage,
+					cost,
+					finishReason,
+					durationMs,
+					responseMessages: result.response.messages,
+					steps: result.steps as AgentRunResult['steps'],
+					responseParts: [],
+				};
+			} finally {
+				this._onDispose();
+			}
+		});
 	}
 
 	checkIsUserOwner(userId: string): boolean {
