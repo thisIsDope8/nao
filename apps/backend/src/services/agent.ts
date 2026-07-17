@@ -56,7 +56,7 @@ import {
 } from '../utils/ai';
 import { assertBudgetNotExceeded } from '../utils/budget';
 import { HandlerError } from '../utils/error';
-import { langfuseTelemetry, type LangfuseTraceContext,withLangfuseTrace } from '../utils/langfuse';
+import { type LangfuseTraceContext, withLangfuseTrace } from '../utils/langfuse';
 import {
 	getDefaultModelId,
 	getEnvModelSelections,
@@ -391,6 +391,19 @@ class AgentManager {
 
 	private get _maxOutputTokens(): number {
 		return this._modelConfig.callSettings?.maxOutputTokens ?? MAX_OUTPUT_TOKENS;
+	}
+
+	private _langfuseContext(): LangfuseTraceContext {
+		return {
+			userId: this.chat.userId,
+			sessionId: this.chat.id,
+			tags: ['nao'],
+			metadata: {
+				projectId: this.chat.projectId,
+				modelId: this._modelSelection.modelId,
+				provider: this._modelSelection.provider,
+			},
+		};
 	}
 
 	private async _prepareStep(messages: ModelMessage[]): Promise<{ messages: ModelMessage[] }> {
