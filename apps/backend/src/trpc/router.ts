@@ -1,4 +1,5 @@
 import { accountRoutes } from './account.routes';
+import { analyticsEventRoutes } from './analytics-event.routes';
 import { apiKeyRoutes } from './api-key.routes';
 import { authConfigRoutes } from './auth-config.routes';
 import { automationRoutes } from './automation.routes';
@@ -14,6 +15,7 @@ import { embedRoutes } from './embed.routes';
 import { favoriteRoutes } from './favorite.routes';
 import { feedbackRoutes } from './feedback.routes';
 import { githubRoutes } from './github.routes';
+import { gitlabRoutes } from './gitlab.routes';
 import { licenseRoutes } from './license.routes';
 import { logRoutes } from './log.routes';
 import { mcpRoutes } from './mcp.routes';
@@ -34,6 +36,7 @@ import { usageRoutes } from './usage.routes';
 import { userRoutes } from './user.routes';
 
 export const trpcRouter = router({
+	analyticsEvent: analyticsEventRoutes,
 	branding: brandingRoutes,
 	budget: budgetRoutes,
 	embed: embedRoutes,
@@ -48,6 +51,7 @@ export const trpcRouter = router({
 	favorite: favoriteRoutes,
 	feedback: feedbackRoutes,
 	github: githubRoutes,
+	gitlab: gitlabRoutes,
 	license: licenseRoutes,
 	log: logRoutes,
 	posthog: posthogRoutes,

@@ -1,6 +1,7 @@
 import { createFileRoute } from '@tanstack/react-router';
 import { useQuery } from '@tanstack/react-query';
 
+import { DateFormatSection } from '@/components/settings/date-format-section';
 import { EnvVarsSection } from '@/components/settings/env-vars-section';
 import { GitSyncSection } from '@/components/settings/git-sync-section';
 import { GoogleConfigSection } from '@/components/settings/google-credentials-section';
@@ -16,7 +17,9 @@ export const Route = createFileRoute('/_sidebar-layout/settings/project/')({
 
 function ProjectTabPage() {
 	const project = useQuery(trpc.project.getCurrent.queryOptions());
+	const systemConfig = useQuery(trpc.system.getPublicConfig.queryOptions());
 	const { isAdmin } = usePermissions();
+	const isCloud = systemConfig.data?.naoMode === 'cloud';
 
 	return (
 		<>
@@ -44,16 +47,20 @@ function ProjectTabPage() {
 
 			<EnvVarsSection isAdmin={isAdmin} />
 
-			<SettingsCard title='Google Credentials'>
-				{project.isLoading ? (
-					<div className='space-y-2'>
-						<Skeleton className='h-4 w-40' />
-						<Skeleton className='h-4 w-full max-w-xs' />
-					</div>
-				) : (
-					<GoogleConfigSection isAdmin={isAdmin} />
-				)}
-			</SettingsCard>
+			<DateFormatSection isAdmin={isAdmin} />
+
+			{!isCloud && (
+				<SettingsCard title='Google SSO'>
+					{project.isLoading ? (
+						<div className='space-y-2'>
+							<Skeleton className='h-4 w-40' />
+							<Skeleton className='h-4 w-full max-w-xs' />
+						</div>
+					) : (
+						<GoogleConfigSection isAdmin={isAdmin} />
+					)}
+				</SettingsCard>
+			)}
 		</>
 	);
 }

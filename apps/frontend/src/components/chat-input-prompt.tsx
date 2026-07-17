@@ -17,7 +17,7 @@ const storyMentionOption: MentionOption = {
 	id: STORY_MENTION_ID,
 	label: 'Story mode',
 	labelRight: 'Create a new story',
-	icon: <StoryIcon className='size-4' />,
+	icon: <StoryIcon className='size-4' strokeWidth={2.25} />,
 };
 
 type ChatPromptProps = {
@@ -25,6 +25,7 @@ type ChatPromptProps = {
 	placeholder: string;
 	initialValue?: string;
 	minHeight?: string;
+	submitOnEnter?: boolean;
 	onChange: (value: string, mentions: SelectedMention[]) => void;
 	onEnter?: (value: string, mentions: SelectedMention[]) => void;
 };
@@ -48,10 +49,10 @@ const theme: PromptTheme = {
 		itemHoverColor: 'var(--accent)',
 	},
 	pill: {
-		backgroundColor: 'var(--accent)',
-		color: 'var(--accent-foreground)',
-		padding: 'calc(var(--spacing) * 0.4) calc(var(--spacing) * 1.2)',
-		borderRadius: 'var(--radius-sm)',
+		backgroundColor: 'var(--background)',
+		color: 'var(--foreground)',
+		padding: 'calc(var(--spacing) * 1) calc(var(--spacing) * 2.5)',
+		borderRadius: '9999px',
 	},
 };
 
@@ -68,7 +69,15 @@ function buildDatabaseObjectOptions(
 	}));
 }
 
-export function ChatPrompt({ promptRef, placeholder, initialValue, minHeight, onChange, onEnter }: ChatPromptProps) {
+export function ChatPrompt({
+	promptRef,
+	placeholder,
+	initialValue,
+	minHeight,
+	submitOnEnter = true,
+	onChange,
+	onEnter,
+}: ChatPromptProps) {
 	const { data: skills } = useQuery(trpc.skill.list.queryOptions());
 	const { data: databaseObjects } = useQuery(trpc.project.getDatabaseObjects.queryOptions());
 	const promptTheme = minHeight ? { ...theme, minHeight } : theme;
@@ -104,6 +113,7 @@ export function ChatPrompt({ promptRef, placeholder, initialValue, minHeight, on
 			]}
 			onChange={onChange}
 			onEnter={onEnter}
+			submitOnEnter={submitOnEnter}
 			className='w-full nao-input'
 			style={
 				{

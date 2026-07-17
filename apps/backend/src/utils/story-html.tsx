@@ -1,10 +1,16 @@
-import { DEFAULT_COLORS, defaultColorFor, formatCompactNumber, labelize } from '@nao/shared';
+import { bucketPieData, DEFAULT_COLORS, defaultColorFor, formatCompactNumber, labelize } from '@nao/shared';
+import {
+	type DateFormatSettings,
+	DEFAULT_DATE_FORMAT_SETTINGS,
+	formatDateValue,
+	resolveDateFormatPattern,
+} from '@nao/shared/date';
 import type { ParsedChartBlock, ParsedTableBlock, Segment } from '@nao/shared/story-segments';
 import { splitCodeIntoSegments } from '@nao/shared/story-segments';
 import { formatCellValue, isNumericColumn } from '@nao/shared/story-table-utils';
 import type { displayChart } from '@nao/shared/tools';
 import { marked, Renderer } from 'marked';
-import React from 'react';
+import React, { createContext, useContext } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 
 import { renderChartToSvg } from '../components/generate-chart';
@@ -17,20 +23,32 @@ const DOC_HORIZ_PADDING = 24;
 const CHART_WIDTH = DOC_MAX_WIDTH - DOC_HORIZ_PADDING * 2;
 const CHART_HEIGHT = Math.round((CHART_WIDTH * 9) / 16);
 
-export function generateStoryHtml(story: StoryInput, queryData: QueryDataMap | null): string {
+const DateFormatContext = createContext<DateFormatSettings>({ ...DEFAULT_DATE_FORMAT_SETTINGS });
+
+export function generateStoryHtml(
+	story: StoryInput,
+	queryData: QueryDataMap | null,
+	dateFormat?: DateFormatSettings | null,
+): string {
+	const resolvedDateFormat = dateFormat ?? { ...DEFAULT_DATE_FORMAT_SETTINGS };
 	const segments = splitCodeIntoSegments(story.code);
 	const markup = renderToStaticMarkup(
-		<StoryDocument title={story.title}>
-			{segments.map((seg, i) => (
-				<StorySegment key={i} segment={seg} queryData={queryData} />
-			))}
-			<StoryFooter />
-		</StoryDocument>,
+		<DateFormatContext.Provider value={resolvedDateFormat}>
+			<StoryDocument title={story.title}>
+				{segments.map((seg, i) => (
+					<StorySegment key={i} segment={seg} queryData={queryData} />
+				))}
+				<StoryFooter />
+			</StoryDocument>
+		</DateFormatContext.Provider>,
 	);
 	return `<!DOCTYPE html>\n${markup}`;
 }
 
 function StoryDocument({ title, children }: { title: string; children: React.ReactNode }) {
+	const dateFormat = useContext(DateFormatContext);
+	const pattern = resolveDateFormatPattern(dateFormat);
+	const tooltipScript = renderTooltipScript(pattern);
 	return (
 		<html lang='en'>
 			<head>
@@ -41,14 +59,16 @@ function StoryDocument({ title, children }: { title: string; children: React.Rea
 			</head>
 			<body>
 				{children}
-				<script dangerouslySetInnerHTML={{ __html: TOOLTIP_SCRIPT }} />
+				<script dangerouslySetInnerHTML={{ __html: tooltipScript }} />
 			</body>
 		</html>
 	);
 }
 
 function StoryFooter() {
-	const date = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
+	const dateFormat = useContext(DateFormatContext);
+	const today = new Date().toISOString().slice(0, 10);
+	const date = formatDateValue(today, dateFormat);
 	return (
 		<footer
 			style={{ marginTop: 48, paddingTop: 16, borderTop: '1px solid #e5e7eb', fontSize: 12, color: '#9ca3af' }}
@@ -110,6 +130,7 @@ function GridBlock({
 }
 
 function ChartBlock({ chart, queryData }: { chart: ParsedChartBlock; queryData: QueryDataMap | null }) {
+	const dateFormat = useContext(DateFormatContext);
 	const rows = queryData?.[chart.queryId]?.data as Record<string, unknown>[] | undefined;
 	if (!rows?.length) {
 		return <Placeholder label={chart.title || 'Chart'} message='Data unavailable' />;
@@ -119,20 +140,29 @@ function ChartBlock({ chart, queryData }: { chart: ParsedChartBlock; queryData: 
 		return <KpiCards chart={chart} rows={rows} />;
 	}
 
+	const isPie = chart.chartType === 'pie' || chart.chartType === 'donut';
+	const valueKey = chart.series[0]?.data_key ?? '';
+	const chartRows = isPie ? bucketPieData(rows, chart.xAxisKey, valueKey) : rows;
+
 	try {
+		// Pie/donut render their legend to the right, baked into the SVG; other
+		// chart types keep the HTML legend rendered below.
 		const svg = renderChartToSvg({
 			config: toChartConfig(chart),
 			data: rows,
 			width: CHART_WIDTH,
 			height: CHART_HEIGHT,
 			margin: { top: 0, right: 0, bottom: 0, left: 0 },
-			includeLegend: false,
+			includeLegend: isPie,
+			dateFormat,
 		});
 		const chartData = JSON.stringify({
-			data: rows,
+			data: chartRows,
 			xAxisKey: chart.xAxisKey,
 			series: chart.series,
 			chartType: chart.chartType,
+			yAxisMin: chart.yAxisMin,
+			yAxisMax: chart.yAxisMax,
 		});
 		return (
 			<div style={{ margin: '16px 0' }}>
@@ -142,7 +172,7 @@ function ChartBlock({ chart, queryData }: { chart: ParsedChartBlock; queryData: 
 					data-chart={chartData}
 					dangerouslySetInnerHTML={{ __html: svg }}
 				/>
-				{chart.chartType !== 'pie' && <ChartLegend series={chart.series} />}
+				{!isPie && <ChartLegend series={chart.series} />}
 			</div>
 		);
 	} catch {
@@ -151,6 +181,7 @@ function ChartBlock({ chart, queryData }: { chart: ParsedChartBlock; queryData: 
 }
 
 function ChartLegend({ series }: { series: ParsedChartBlock['series'] }) {
+	const dateFormat = useContext(DateFormatContext);
 	return (
 		<div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 16, paddingTop: 12 }}>
 			{series.map((s, i) => {
@@ -161,7 +192,7 @@ function ChartLegend({ series }: { series: ParsedChartBlock['series'] }) {
 						style={{ display: 'flex', alignItems: 'center', gap: 6, color: '#6b7280', fontSize: 12 }}
 					>
 						<div style={{ width: 8, height: 8, borderRadius: 2, flexShrink: 0, background: color }} />
-						{s.label || labelize(s.data_key)}
+						{s.label || labelize(s.data_key, dateFormat)}
 					</div>
 				);
 			})}
@@ -274,10 +305,11 @@ function TableBlock({ table, queryData }: { table: ParsedTableBlock; queryData: 
 }
 
 function CellValue({ value }: { value: unknown }) {
+	const dateFormat = useContext(DateFormatContext);
 	if (value === null || value === undefined) {
 		return <span style={{ fontStyle: 'italic', color: 'rgba(0,0,0,0.3)' }}>NULL</span>;
 	}
-	return <>{formatCellValue(value)}</>;
+	return <>{formatCellValue(value, dateFormat)}</>;
 }
 
 function Placeholder({ label, message }: { label: string; message: string }) {
@@ -305,7 +337,10 @@ function toChartConfig(chart: ParsedChartBlock) {
 		x_axis_key: chart.xAxisKey,
 		x_axis_type: chart.xAxisType as displayChart.XAxisType | null,
 		series: chart.series,
+		y_axis_min: chart.yAxisMin,
+		y_axis_max: chart.yAxisMax,
 		title: chart.title,
+		show_data_labels: chart.showDataLabels,
 	};
 }
 
@@ -341,13 +376,53 @@ img{max-width:100%;height:auto;border-radius:4px;margin:8px 0}
 @media print{body{padding:0;max-width:none}.nao-tooltip{display:none}.nao-chart{break-inside:avoid}table{break-inside:avoid}div[style*="display:flex"]{break-inside:avoid}h1,h2,h3{break-after:avoid}svg{max-width:100%!important;height:auto!important}footer{break-inside:avoid}}
 `;
 
-const TOOLTIP_SCRIPT = `
+function renderTooltipScript(datePattern: string): string {
+	// Inside a `<script>` block, an HTML parser will close the script tag on a
+	// raw `</script>` regardless of JS string quoting. Escape `<` (and the
+	// equally hazardous `--` / `]]>`) so a user-supplied custom pattern can
+	// never inject markup.
+	const escapedPattern = JSON.stringify(datePattern)
+		.replace(/</g, '\\u003C')
+		.replace(/>/g, '\\u003E')
+		.replace(/&/g, '\\u0026')
+		.replace(/\u2028/g, '\\u2028')
+		.replace(/\u2029/g, '\\u2029');
+	return TOOLTIP_SCRIPT_TEMPLATE.replace('__DATE_PATTERN__', escapedPattern);
+}
+
+const TOOLTIP_SCRIPT_TEMPLATE = `
 (function(){
 	var PIE_COLORS=${JSON.stringify(DEFAULT_COLORS)};
+	var DATE_PATTERN=__DATE_PATTERN__;
+	var MONTHS_LONG=['January','February','March','April','May','June','July','August','September','October','November','December'];
+	var MONTHS_SHORT=MONTHS_LONG.map(function(m){return m.slice(0,3)});
+	var WEEKDAYS_LONG=['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+	var WEEKDAYS_SHORT=WEEKDAYS_LONG.map(function(w){return w.slice(0,3)});
+	var TOKEN_REGEX=/YYYY|YY|MMMM|MMM|MM|M|DD|D|dddd|ddd|\\[([^\\]]*)\\]/g;
+	function pad2(n){n=String(n);return n.length<2?'0'+n:n}
+	function formatDate(d){
+		var y=d.getUTCFullYear(),mi=d.getUTCMonth(),day=d.getUTCDate(),wi=d.getUTCDay();
+		return DATE_PATTERN.replace(TOKEN_REGEX,function(token,literal){
+			if(literal!==undefined)return literal;
+			switch(token){
+				case 'YYYY':return String(y).padStart(4,'0');
+				case 'YY':return pad2(y%100);
+				case 'MMMM':return MONTHS_LONG[mi];
+				case 'MMM':return MONTHS_SHORT[mi];
+				case 'MM':return pad2(mi+1);
+				case 'M':return String(mi+1);
+				case 'DD':return pad2(day);
+				case 'D':return String(day);
+				case 'dddd':return WEEKDAYS_LONG[wi];
+				case 'ddd':return WEEKDAYS_SHORT[wi];
+				default:return token;
+			}
+		});
+	}
 	function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;')}
 	function labelize(s){
 		var str=String(s);
-		if(/^\\d{4}-\\d{2}-\\d{2}/.test(str)){var d=new Date(str);if(!isNaN(d.getTime()))return escHtml(d.toLocaleDateString('en-US',{timeZone:'UTC'}))}
+		if(/^\\d{4}-\\d{2}-\\d{2}/.test(str)){var d=new Date(str);if(!isNaN(d.getTime()))return escHtml(formatDate(d))}
 		return escHtml(str.replace(/_/g,' ').replace(/\\b\\w/g,function(c){return c.toUpperCase()}))
 	}
 	function formatCompact(v){var a=Math.abs(v);if(a>=1e9)return (v/1e9).toFixed(1).replace(/[.]0$/,'')+'B';if(a>=1e6)return (v/1e6).toFixed(1).replace(/[.]0$/,'')+'M';if(a>=1e4)return (v/1e3).toFixed(1).replace(/[.]0$/,'')+'K';return v.toLocaleString()}
@@ -359,7 +434,7 @@ const TOOLTIP_SCRIPT = `
 		var cfg;try{cfg=JSON.parse(raw.replace(/&#39;/g,"'").replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&quot;/g,'"').replace(/&amp;/g,'&'))}catch(e){return}
 
 		var pieColorMap=null;
-		if(cfg.chartType==='pie'){
+		if(cfg.chartType==='pie'||cfg.chartType==='donut'){
 			pieColorMap={};var ci=0;var seen={};
 			cfg.data.forEach(function(d){
 				var v=String(d[cfg.xAxisKey]!=null?d[cfg.xAxisKey]:'');
@@ -378,7 +453,7 @@ const TOOLTIP_SCRIPT = `
 		var areas=svg.querySelectorAll('.recharts-active-dot, .recharts-dot');
 		var shapes=bars.length?bars:areas;
 
-		if(cfg.chartType==='pie'){
+		if(cfg.chartType==='pie'||cfg.chartType==='donut'){
 			var slices=svg.querySelectorAll('.recharts-pie-sector');
 			slices.forEach(function(el,i){
 				var row=cfg.data[i];
@@ -417,10 +492,17 @@ const TOOLTIP_SCRIPT = `
 		function showTip(e,row){
 			var label=row[cfg.xAxisKey];
 			var isPie=!!pieColorMap;
-			var html='<div class="nao-tooltip-label">'+(isPie?labelize(cfg.series[0]&&(cfg.series[0].label||cfg.series[0].data_key)||''):labelize(label!=null?label:''))+'</div>';
+			var html='<div class="nao-tooltip-label">'+labelize(label!=null?label:'')+'</div>';
 			html+='<div class="nao-tooltip-rows">';
+			var isPercent=cfg.chartType==='stacked_bar_100'||cfg.chartType==='stacked_area_100';
+			var seriesTotal=0;
+			cfg.series.forEach(function(s){var sv=row[s.data_key];if(typeof sv==='number'&&!s.is_total)seriesTotal+=sv;});
+			function pctShare(v){if(typeof v!=='number'||!seriesTotal)return '0%';var sh=Math.round(v/seriesTotal*1000)/10;return (sh%1===0?sh:sh.toFixed(1))+'%';}
 			var numericValues=[];
+			var hasTotalSeries=false;
 			cfg.series.forEach(function(s, si){
+				// A total series is dropped from 100% stacked rendering, so hide its tooltip row too.
+				if(isPercent&&s.is_total)return;
 				var color;
 				if(isPie){
 					color=pieColorMap[String(label!=null?label:'')]||PIE_COLORS[0];
@@ -431,18 +513,19 @@ const TOOLTIP_SCRIPT = `
 				}
 				var val=row[s.data_key];
 				if(typeof val==='number')numericValues.push(val);
+				if(s.is_total)hasTotalSeries=true;
 				var rowName=isPie?labelize(label!=null?label:''):labelize(s.label||s.data_key);
 				html+='<div class="nao-tooltip-row">'
 					+'<span class="nao-tooltip-swatch" style="background:'+escHtml(color)+'"></span>'
 					+'<span class="nao-tooltip-name">'+rowName+'</span>'
-					+'<span class="nao-tooltip-value">'+formatVal(val)+'</span>'
+					+'<span class="nao-tooltip-value">'+(isPercent?pctShare(val):formatVal(val))+'</span>'
 					+'</div>';
 			});
-			if(numericValues.length>1){
+			if(numericValues.length>1 && (isPercent || !hasTotalSeries)){
 				var total=numericValues.reduce(function(a,b){return a+b},0);
 				html+='<div class="nao-tooltip-total">'
 					+'<span class="nao-tooltip-name">Total</span>'
-					+'<span class="nao-tooltip-value">'+escHtml(formatCompact(total))+'</span>'
+					+'<span class="nao-tooltip-value">'+(isPercent?'100%':escHtml(formatCompact(total)))+'</span>'
 					+'</div>';
 			}
 			html+='</div>';

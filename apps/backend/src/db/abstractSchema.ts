@@ -9,6 +9,9 @@ const allSchema = dbConfig.dialect === Dialect.Postgres ? pgSchema : sqliteSchem
 export type NewUser = typeof sqliteSchema.user.$inferInsert;
 export type User = typeof sqliteSchema.user.$inferSelect;
 
+export type DBUserPreference = typeof sqliteSchema.userPreference.$inferSelect;
+export type NewUserPreference = typeof sqliteSchema.userPreference.$inferInsert;
+
 export type NewAccount = typeof sqliteSchema.account.$inferInsert;
 export type Account = typeof sqliteSchema.account.$inferSelect;
 
@@ -127,10 +130,19 @@ export type NewBrandingConfig = typeof sqliteSchema.brandingConfig.$inferInsert;
 export type DBFavorite = typeof sqliteSchema.favorite.$inferSelect;
 export type NewFavorite = typeof sqliteSchema.favorite.$inferInsert;
 
+export type DBAnalyticsEvent = typeof sqliteSchema.analyticsEvent.$inferSelect;
+export type NewAnalyticsEvent = typeof sqliteSchema.analyticsEvent.$inferInsert;
+
 export type DBStoryFolder = typeof sqliteSchema.storyFolder.$inferSelect;
 export type NewStoryFolder = typeof sqliteSchema.storyFolder.$inferInsert;
 
 export type DBStoryFolderItem = typeof sqliteSchema.storyFolderItem.$inferSelect;
 export type NewStoryFolderItem = typeof sqliteSchema.storyFolderItem.$inferInsert;
+
+export type DBMcpOAuthClient = typeof sqliteSchema.mcpOAuthClient.$inferSelect;
+export type NewMcpOAuthClient = typeof sqliteSchema.mcpOAuthClient.$inferInsert;
+
+export type DBMcpUserToken = typeof sqliteSchema.mcpUserToken.$inferSelect;
+export type NewMcpUserToken = typeof sqliteSchema.mcpUserToken.$inferInsert;
 
 export default allSchema as typeof sqliteSchema;

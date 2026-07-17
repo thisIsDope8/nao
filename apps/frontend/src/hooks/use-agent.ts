@@ -2,7 +2,7 @@ import { Chat as Agent, useChat } from '@ai-sdk/react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useNavigate, useParams } from '@tanstack/react-router';
 import { DefaultChatTransport } from 'ai';
-import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useChatId } from './use-chat-id';
 import { useLocalStorage } from './use-local-storage';
 import { usePrevRef } from './use-prev';
@@ -18,6 +18,7 @@ import {
 	checkIsAgentRunning,
 	extractImagesFromMessage,
 	getLastUserMessageIdx,
+	getMessageText,
 	getTextFromUserMessageOrThrow,
 	NEW_CHAT_ID,
 	parseBudgetError,
@@ -35,6 +36,8 @@ export interface AgentHelpers {
 	setMessages: UseChatHelpers<UIMessage>['setMessages'];
 	queueOrSendMessage: (args: SendMessageArgs) => Promise<void>;
 	editMessage: (args: { messageId: string; text: string }) => Promise<void | UIMessage>;
+	resendMessage: (args: { messageId: string }) => Promise<void | UIMessage>;
+	switchMessageVersion: (args: { messageId: string }) => Promise<void>;
 	submitQueuedMessageNow: (messageId: string) => Promise<void>;
 	status: UseChatHelpers<UIMessage>['status'];
 	isRunning: boolean;
@@ -45,6 +48,8 @@ export interface AgentHelpers {
 	selectedModel: LlmSelectedModel | null;
 	setSelectedModel: React.Dispatch<React.SetStateAction<LlmSelectedModel | null>>;
 	setMentions: (mentions: MentionOption[]) => void;
+	adminMode: boolean;
+	setAdminMode: (enabled: boolean) => void;
 	isReadonly?: boolean;
 }
 
@@ -57,6 +62,15 @@ export interface SendMessageArgs {
 export const selectedModelStorage = createLocalStorage<LlmSelectedModel>('nao-selected-model');
 
 const agentCitationStore = new WeakMap<Agent<UIMessage>, CitationData | undefined>();
+/** Admin mode captured at send time, so an ack-time toggle cannot mislabel the message. */
+const agentAdminModeStore = new WeakMap<Agent<UIMessage>, boolean>();
+
+interface AgentSendRefs {
+	adminModeRef: { current: boolean };
+	selectedModelRef: { current: LlmSelectedModel | null };
+	mentionsRef: { current: MentionOption[] };
+}
+const agentSendRefsStore = new WeakMap<Agent<UIMessage>, AgentSendRefs>();
 
 export const useAgent = ({ disableNavigation = false }: { disableNavigation?: boolean } = {}): AgentHelpers => {
 	const navigate = useNavigate();
@@ -72,9 +86,18 @@ export const useAgent = ({ disableNavigation = false }: { disableNavigation?: bo
 	const selectedModelRef = useRef<LlmSelectedModel | null>(null);
 	selectedModelRef.current = selectedModel;
 	const mentionsRef = useRef<MentionOption[]>([]);
+	const [adminMode, setAdminModeState] = useState(false);
+	const adminModeRef = useRef(false);
+	/** Set to the server id of a chat that was just created, so the upcoming chatId change is treated as the same conversation continuing rather than opening a different chat. */
+	const continuationChatIdRef = useRef<string | undefined>(undefined);
 
 	const setMentions = useCallback((mentions: MentionOption[]) => {
 		mentionsRef.current = mentions;
+	}, []);
+
+	const setAdminMode = useCallback((enabled: boolean) => {
+		adminModeRef.current = enabled;
+		setAdminModeState(enabled);
 	}, []);
 
 	const agentInstance = useMemo(() => {
@@ -94,6 +117,7 @@ export const useAgent = ({ disableNavigation = false }: { disableNavigation?: bo
 					messageQueueStore.moveQueue(agentId, newChat.id);
 					agentService.moveAgent(agentId, newChat.id);
 					agentId = newChat.id;
+					continuationChatIdRef.current = newChat.id;
 					setChat({ chatId: newChat.id }, { ...newChat, messages: [] });
 					if (!disableNavigation) {
 						navigate({ to: '/$chatId', params: { chatId: newChat.id }, state: { fromMessageSend: true } });
@@ -114,9 +138,18 @@ export const useAgent = ({ disableNavigation = false }: { disableNavigation?: bo
 				const { newId } = dataPart.data;
 				const citation = agentCitationStore.get(newAgent);
 				agentCitationStore.delete(newAgent);
+				const sentInAdminMode = agentAdminModeStore.get(newAgent) ?? false;
+				agentAdminModeStore.delete(newAgent);
 				const lastUserMessageIndex = getLastUserMessageIdx(agent.messages);
 				agent.messages = agent.messages.map((message, idx) =>
-					idx === lastUserMessageIndex ? { ...message, id: newId, ...(citation && { citation }) } : message,
+					idx === lastUserMessageIndex
+						? {
+								...message,
+								id: newId,
+								...(citation && { citation }),
+								...(sentInAdminMode && { source: 'admin' as const }),
+							}
+						: message,
 				);
 			}
 		};
@@ -130,10 +163,17 @@ export const useAgent = ({ disableNavigation = false }: { disableNavigation?: bo
 						throw new Error('No message to send.');
 					}
 
-					const mentions = mentionsRef.current;
-					mentionsRef.current = [];
+					const liveRefs = agentSendRefsStore.get(newAgent);
+					const activeMentionsRef = liveRefs?.mentionsRef ?? mentionsRef;
+					const activeSelectedModelRef = liveRefs?.selectedModelRef ?? selectedModelRef;
+					const activeAdminModeRef = liveRefs?.adminModeRef ?? adminModeRef;
+
+					const mentions = activeMentionsRef.current;
+					activeMentionsRef.current = [];
 					const citation = agentCitationStore.get(newAgent);
 					const images = extractImagesFromMessage(messageToSend);
+					const adminModeAtSend = activeAdminModeRef.current;
+					agentAdminModeStore.set(newAgent, adminModeAtSend);
 					return {
 						headers: getActiveProjectId() ? { 'x-nao-project-id': getActiveProjectId()! } : undefined,
 						body: {
@@ -144,9 +184,10 @@ export const useAgent = ({ disableNavigation = false }: { disableNavigation?: bo
 								images: images.length > 0 ? images : undefined,
 								citation,
 							},
-							model: selectedModelRef.current ?? undefined,
+							model: activeSelectedModelRef.current ?? undefined,
 							mentions: mentions.length > 0 ? mentions : undefined,
 							timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+							adminMode: adminModeAtSend || undefined,
 						},
 					};
 				},
@@ -161,6 +202,9 @@ export const useAgent = ({ disableNavigation = false }: { disableNavigation?: bo
 					newAgent.sendMessage({ text: next.text, files: files.length > 0 ? files : undefined });
 				} else {
 					chatActivityStore.setRunning(agentId, false);
+					if (agentId !== NEW_CHAT_ID && !isAbort) {
+						queryClient.invalidateQueries({ queryKey: trpc.chat.get.queryKey({ chatId: agentId }) });
+					}
 					if (chatIdRef.current !== agentId) {
 						chatActivityStore.setUnread(agentId, true);
 						agentService.disposeAgent(agentId);
@@ -179,9 +223,12 @@ export const useAgent = ({ disableNavigation = false }: { disableNavigation?: bo
 		return agentService.registerAgent(agentId, newAgent);
 	}, [chatId, disableNavigation, navigate, setChat, queryClient]);
 
+	agentSendRefsStore.set(agentInstance, { adminModeRef, selectedModelRef, mentionsRef });
+
 	const { status, error, clearError, sendMessage, setMessages, messages } = useChat({ chat: agentInstance });
 
 	const stopAgentMutation = useMutation(trpc.chat.stop.mutationOptions());
+	const switchMessageVersionMutation = useMutation(trpc.chat.switchMessageVersion.mutationOptions());
 	const isRunning = checkIsAgentRunning({ status });
 
 	useEffect(() => {
@@ -209,6 +256,29 @@ export const useAgent = ({ disableNavigation = false }: { disableNavigation?: bo
 			}
 		}
 	}, [error]); // eslint-disable-line react-hooks/exhaustive-deps
+
+	// Carry admin mode across an admin conversation: enable it for chats whose first or
+	// last user message was sent from admin mode, and disable it for normal chats. A
+	// freshly created chat keeps its current mode so follow-ups stay in admin mode.
+	const syncedAdminChatRef = useRef<string | undefined>(undefined);
+	useEffect(() => {
+		if (!chatId) {
+			syncedAdminChatRef.current = undefined;
+			return;
+		}
+		if (continuationChatIdRef.current === chatId) {
+			continuationChatIdRef.current = undefined;
+			syncedAdminChatRef.current = chatId;
+			return;
+		}
+		if (chat.isLoading || messages.length === 0 || syncedAdminChatRef.current === chatId) {
+			return;
+		}
+		syncedAdminChatRef.current = chatId;
+		const userMessages = messages.filter((m) => m.role === 'user');
+		const conversationIsAdmin = userMessages.at(0)?.source === 'admin' || userMessages.at(-1)?.source === 'admin';
+		setAdminMode(conversationIsAdmin);
+	}, [chatId, chat.isLoading, messages, setAdminMode]);
 
 	const stopAgent = useCallback(async () => {
 		if (!chatId) {
@@ -285,12 +355,51 @@ export const useAgent = ({ disableNavigation = false }: { disableNavigation?: bo
 		[messages, setMessages, isRunning, handleSendMessage],
 	);
 
+	const resendMessage = useCallback(
+		async ({ messageId }: { messageId: string }) => {
+			if (isRunning) {
+				return;
+			}
+
+			const messageIndex = messages.findIndex((message) => message.id === messageId);
+			if (messageIndex === -1) {
+				return;
+			}
+
+			const original = messages[messageIndex];
+			const text = getMessageText(original).trim();
+			if (!text) {
+				return;
+			}
+
+			agentCitationStore.set(agentInstance, original.citation);
+			setMessages(messages.slice(0, messageIndex));
+			return handleSendMessage({ text }, { body: { messageToEditId: messageId } });
+		},
+		[messages, setMessages, isRunning, handleSendMessage, agentInstance],
+	);
+
+	const switchMessageVersion = useCallback(
+		async ({ messageId }: { messageId: string }) => {
+			const targetChatId = chatIdRef.current;
+			if (!targetChatId || isRunning) {
+				return;
+			}
+
+			await switchMessageVersionMutation.mutateAsync({ chatId: targetChatId, messageId });
+			await queryClient.invalidateQueries({ queryKey: trpc.chat.get.queryKey({ chatId: targetChatId }) });
+		},
+		[isRunning, switchMessageVersionMutation, queryClient],
+	);
+
 	return useMemoObject({
 		chatId,
 		messages,
 		setMessages,
 		queueOrSendMessage,
 		editMessage,
+		resendMessage,
+		switchMessageVersion,
 		submitQueuedMessageNow,
 		status,
 		isRunning,
@@ -301,6 +410,8 @@ export const useAgent = ({ disableNavigation = false }: { disableNavigation?: bo
 		selectedModel,
 		setSelectedModel,
 		setMentions,
+		adminMode,
+		setAdminMode,
 	});
 };
 

@@ -1,7 +1,9 @@
+import { TAG_ATTRS } from '@nao/shared/story-segments';
 import { generateText, Output } from 'ai';
 import { CronExpressionParser } from 'cron-parser';
 import { z } from 'zod';
 
+import { llmTelemetry } from '../agents/telemetry';
 import { LiveStoryRefreshPrompt } from '../components/ai/live-story-refresh-prompt';
 import { env } from '../env';
 import { renderToMarkdown } from '../lib/markdown';
@@ -191,7 +193,7 @@ async function generateDynamicStoryCode(
 				}),
 			}),
 			maxOutputTokens: MAX_OUTPUT_TOKENS,
-			...langfuseTelemetry('nao-live-story', { projectId }),
+			experimental_telemetry: llmTelemetry('nao-live-story', { projectId, tags: [provider] }),
 		});
 
 		const candidate = stripCodeFence(output.code.trim());
@@ -295,7 +297,11 @@ function preservesStoryStructure(originalCode: string, candidateCode: string): b
 }
 
 function extractStructureTokens(code: string): string[] {
-	return code.match(/<grid\s+[^>]*>|<\/grid>|<chart\s+[^/>]*\/?>|<table\s+[^/>]*\/?>/g) ?? [];
+	const structureRegex = new RegExp(
+		`<grid\\s+[^>]*>|<\\/grid>|<chart\\s+${TAG_ATTRS}\\/?>|<table\\s+${TAG_ATTRS}\\/?>`,
+		'g',
+	);
+	return code.match(structureRegex) ?? [];
 }
 
 function extractHeadingTokens(code: string): string[] {

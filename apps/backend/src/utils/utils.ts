@@ -25,17 +25,73 @@ export const getErrorMessage = (error: unknown): string | null => {
 	return String(error);
 };
 
-export const buildGithubAllowlist = (allowedUsers?: string): Set<string> => {
+/** GitHub and GitLab usernames are case-insensitive, so entries are normalized to lowercase. */
+export const buildUsernameAllowlist = (allowedUsers?: string): Set<string> => {
 	const allowed = new Set<string>();
 	if (allowedUsers) {
-		for (const login of allowedUsers.split(',')) {
-			const trimmed = login.trim();
+		for (const username of allowedUsers.split(',')) {
+			const trimmed = username.trim().toLowerCase();
 			if (trimmed) {
 				allowed.add(trimmed);
 			}
 		}
 	}
 	return allowed;
+};
+
+export const normalizeEmailDomains = (raw: string): string[] => {
+	const seen = new Set<string>();
+	for (const entry of raw.split(',')) {
+		const domain = entry.trim().toLowerCase().replace(/^@/, '');
+		if (domain) {
+			seen.add(domain);
+		}
+	}
+	return [...seen];
+};
+
+export const getEmailDomain = (email: string): string | null => {
+	return email.split('@').at(1)?.trim().toLowerCase() || null;
+};
+
+/**
+ * Free / consumer email providers. These can never be claimed for organization
+ * sign-in routing, since anyone can hold an address on them.
+ */
+const PUBLIC_EMAIL_DOMAINS = new Set<string>([
+	'gmail.com',
+	'googlemail.com',
+	'outlook.com',
+	'hotmail.com',
+	'hotmail.co.uk',
+	'live.com',
+	'msn.com',
+	'yahoo.com',
+	'yahoo.co.uk',
+	'ymail.com',
+	'icloud.com',
+	'me.com',
+	'mac.com',
+	'aol.com',
+	'proton.me',
+	'protonmail.com',
+	'pm.me',
+	'gmx.com',
+	'gmx.net',
+	'gmx.de',
+	'mail.com',
+	'zoho.com',
+	'yandex.com',
+	'yandex.ru',
+	'qq.com',
+	'163.com',
+	'126.com',
+	'fastmail.com',
+	'hey.com',
+]);
+
+export const isPublicEmailDomain = (domain: string): boolean => {
+	return PUBLIC_EMAIL_DOMAINS.has(domain.trim().toLowerCase());
 };
 
 export const isEmailDomainAllowed = (userEmail: string, authDomains?: string) => {

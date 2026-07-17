@@ -2,6 +2,7 @@ import type { LlmSelectedModel } from '@nao/shared/types';
 import { generateText, ModelMessage, Output } from 'ai';
 import { z } from 'zod/v4';
 
+import { llmTelemetry } from '../agents/telemetry';
 import type { UIMessage } from '../types/chat';
 import type { ModelCosts } from '../types/llm';
 import { langfuseTelemetry } from '../utils/langfuse';
@@ -68,7 +69,7 @@ export class TestAgentService extends AgentService {
 			...modelConfig,
 			output: Output.object({ schema }),
 			messages,
-			...langfuseTelemetry('nao-test-verification', { projectId }),
+			experimental_telemetry: llmTelemetry('nao-test-verification', { projectId }),
 		});
 
 		return { data: result.output.data ?? null };

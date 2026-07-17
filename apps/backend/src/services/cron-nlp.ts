@@ -3,6 +3,7 @@ import { CronExpressionParser } from 'cron-parser';
 import { z } from 'zod';
 
 import { LLM_PROVIDERS, type ProviderModelResult } from '../agents/providers';
+import { llmTelemetry } from '../agents/telemetry';
 import * as llmConfigQueries from '../queries/project-llm-config.queries';
 import { langfuseTelemetry } from '../utils/langfuse';
 import { resolveProviderModel } from '../utils/llm';
@@ -35,7 +36,7 @@ export async function naturalLanguageToCron(projectId: string, text: string): Pr
 				}),
 			}),
 			maxOutputTokens: 60,
-			...langfuseTelemetry('nao-cron-nlp', { projectId }),
+			experimental_telemetry: llmTelemetry('nao-cron-nlp', { projectId }),
 		});
 
 		const cron = output?.cron?.trim();

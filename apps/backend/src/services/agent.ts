@@ -19,7 +19,9 @@ import {
 } from 'ai';
 import { z } from 'zod';
 
-import { LLM_PROVIDERS, ProviderModelResult } from '../agents/providers';
+import { fitThinkingBudget, LLM_PROVIDERS, ProviderModelResult } from '../agents/providers';
+import { getSystemPromptOverride, hasNaoPromptPlaceholder, injectNaoPrompt } from '../agents/system-prompts';
+import { llmTelemetry } from '../agents/telemetry';
 import { getTools } from '../agents/tools';
 import { createWebSearchTools } from '../agents/tools/web-search';
 import { getConnections, getTableColumnsContent, getUserRules } from '../agents/user-rules';
@@ -67,6 +69,7 @@ import { addPromptCache } from '../utils/prompt-cache';
 import { truncateMiddle } from '../utils/utils';
 import { compactionService } from './compaction';
 import { hasFeature, LICENSE_FEATURES } from './license.service';
+import { mcpService } from './mcp';
 import { memoryService } from './memory';
 import { getAzureAccessTokenForUser } from './microsoft-auth.service';
 import { skillService } from './skill';
@@ -110,14 +113,37 @@ export type AgentToolsResolver = (context: AgentToolsContext) => AgentTools | Pr
 export const defaultAgentTools: AgentToolsResolver = ({ chat, agentSettings, webTools }) =>
 	getTools(agentSettings, webTools ?? {}, { testMode: chat.testMode });
 
+/**
+ * Admin-mode tool set: the same `execute_sql` tool the chat already uses (it
+ * runs against nao's own app database when `ToolContext.adminMode` is set),
+ * plus charting and follow-ups. Excludes the filesystem context tools.
+ */
+export const adminAgentTools: AgentToolsResolver = ({ chat, agentSettings }) =>
+	getTools(
+		agentSettings,
+		{},
+		{
+			testMode: chat.testMode,
+			builtinToolAllowlist: [
+				'execute_sql',
+				'read_query_result',
+				'display_chart',
+				'suggest_follow_ups',
+				'story',
+				'clarification',
+			],
+		},
+	);
+
 export async function buildToolContext(opts: {
 	projectId: string;
 	userId: string;
 	chatId: string;
 	agentSettings?: AgentSettings | null;
+	adminMode?: boolean;
 }): Promise<ToolContext> {
 	const base = await _buildContextBase(opts);
-	return { ...base, chatId: opts.chatId };
+	return { ...base, chatId: opts.chatId, adminMode: opts.adminMode ?? false };
 }
 
 export async function buildMcpToolContext(opts: {
@@ -199,6 +225,11 @@ export class AgentService {
 			 * authoritative guidance (e.g. context recommendations).
 			 */
 			systemPrompt?: string;
+			/**
+			 * Admin mode: routes `execute_sql` to nao's own app-database views instead
+			 * of the user's warehouse (see `ToolContext.adminMode`).
+			 */
+			adminMode?: boolean;
 		} = {},
 	): Promise<AgentManager> {
 		this._disposeAgent(chat.id);
@@ -206,7 +237,13 @@ export class AgentService {
 		await assertBudgetNotExceeded(chat.projectId, resolvedLlmSelectedModel.provider);
 		const modelConfig = await this._getModelConfig(chat.projectId, resolvedLlmSelectedModel);
 		const agentSettings = await projectQueries.getAgentSettings(chat.projectId);
-		const toolContext = await this._getToolContext(chat.projectId, chat.id, chat.userId, agentSettings);
+		const toolContext = await this._getToolContext(
+			chat.projectId,
+			chat.id,
+			chat.userId,
+			agentSettings,
+			options.adminMode,
+		);
 		const webTools = await this._resolveWebTools(chat.projectId, resolvedLlmSelectedModel.provider, agentSettings);
 		const resolveTools = options.tools ?? defaultAgentTools;
 		const agentTools = await resolveTools({ chat, agentSettings, toolContext, webTools });
@@ -262,8 +299,9 @@ export class AgentService {
 		chatId: string,
 		userId: string,
 		agentSettings: AgentSettings | null,
+		adminMode?: boolean,
 	): Promise<ToolContext> {
-		return buildToolContext({ projectId, userId, chatId, agentSettings });
+		return buildToolContext({ projectId, userId, chatId, agentSettings, adminMode });
 	}
 
 	private _disposeAgent(chatId: string): void {
@@ -320,58 +358,62 @@ class AgentManager {
 		stopWhen: StopCondition<AgentTools>[] = [hasToolCall('suggest_follow_ups'), hasToolCall('clarification')],
 		private readonly _systemPromptOverride?: string,
 	) {
+		const callSettings = this._modelConfig.callSettings ?? {};
+		const provider = this._modelSelection.provider;
+		const providerOptions = fitThinkingBudget(this._modelConfig.providerOptions, this._maxOutputTokens);
+		const providerParams = Object.values(providerOptions)[0];
 		this._agent = new ToolLoopAgent({
 			model: this._modelConfig.model,
-			providerOptions: this._modelConfig.providerOptions,
+			providerOptions,
 			tools: this._agentTools,
-			maxOutputTokens: MAX_OUTPUT_TOKENS,
+			maxOutputTokens: this._maxOutputTokens,
+			...(callSettings.temperature !== undefined && { temperature: callSettings.temperature }),
+			...(callSettings.topP !== undefined && { topP: callSettings.topP }),
+			...(callSettings.topK !== undefined && { topK: callSettings.topK }),
 			prepareStep: async ({ messages }) => this._prepareStep(messages),
 			stopWhen,
 			experimental_context: this._toolContext,
-			...langfuseTelemetry('nao-agent', {
-				chatId: chat.id,
-				projectId: chat.projectId,
-				userId: chat.userId,
-				modelId: _modelSelection.modelId,
-				provider: _modelSelection.provider,
+			experimental_telemetry: llmTelemetry('nao-agent', {
+				sessionId: this.chat.id,
+				userId: this.chat.userId,
+				tags: [provider],
+				projectId: this.chat.projectId,
+				model: this._modelSelection.modelId,
+				...(callSettings.temperature !== undefined && { temperature: callSettings.temperature }),
+				...(callSettings.topP !== undefined && { topP: callSettings.topP }),
+				...(callSettings.topK !== undefined && { topK: callSettings.topK }),
+				...(callSettings.maxOutputTokens !== undefined && { maxOutputTokens: callSettings.maxOutputTokens }),
+				...(providerParams &&
+					Object.keys(providerParams).length > 0 && { providerOptions: JSON.stringify(providerParams) }),
 			}),
 		});
 	}
 
-	private _langfuseContext(): LangfuseTraceContext {
-		return {
-			userId: this.chat.userId,
-			sessionId: this.chat.id,
-			tags: ['nao'],
-			metadata: {
-				projectId: this.chat.projectId,
-				modelId: this._modelSelection.modelId,
-				provider: this._modelSelection.provider,
-			},
-		};
+	private get _maxOutputTokens(): number {
+		return this._modelConfig.callSettings?.maxOutputTokens ?? MAX_OUTPUT_TOKENS;
 	}
 
 	private async _prepareStep(messages: ModelMessage[]): Promise<{ messages: ModelMessage[] }> {
-		// await compactionService.compactConversationIfNeeded({
-		// 	chat: this.chat,
-		// 	provider: this._modelSelection.provider,
-		// 	messages,
-		// 	tools: this._agentTools,
-		// 	maxOutputTokens: MAX_OUTPUT_TOKENS,
-		// 	contextWindow: this._modelConfig.contextWindow,
-		// 	onCompactionStarted: () => {
-		// 		this._streamWriter?.write({
-		// 			type: 'data-compactionSummaryStarted',
-		// 			data: undefined,
-		// 		});
-		// 	},
-		// 	onCompactionFinished: (result) => {
-		// 		this._streamWriter?.write({
-		// 			type: 'data-compaction',
-		// 			data: result,
-		// 		});
-		// 	},
-		// });
+		await compactionService.compactConversationIfNeeded({
+			chat: this.chat,
+			provider: this._modelSelection.provider,
+			messages,
+			tools: this._agentTools,
+			maxOutputTokens: this._maxOutputTokens,
+			contextWindow: this._modelConfig.contextWindow,
+			onCompactionStarted: () => {
+				this._streamWriter?.write({
+					type: 'data-compactionSummaryStarted',
+					data: undefined,
+				});
+			},
+			onCompactionFinished: (result) => {
+				this._streamWriter?.write({
+					type: 'data-compaction',
+					data: result,
+				});
+			},
+		});
 
 		return { messages: this._addCache(this._pruneMessages(messages)) };
 	}
@@ -521,14 +563,32 @@ class AgentManager {
 		return modelMessages;
 	}
 
-	/** Builds the standard system prompt (instructions + user rules + memories + connections). */
 	private async _buildSystemPrompt(provider?: Provider, timezone?: string, chatUrl?: string): Promise<string> {
+		const override = getSystemPromptOverride(this._toolContext.projectFolder, provider);
+		if (override && !hasNaoPromptPlaceholder(override)) {
+			return override;
+		}
+
+		const defaultPrompt = await this._buildDefaultSystemPrompt(provider, timezone, chatUrl);
+		return override ? injectNaoPrompt(override, defaultPrompt) : defaultPrompt;
+	}
+
+	private async _buildDefaultSystemPrompt(provider?: Provider, timezone?: string, chatUrl?: string): Promise<string> {
 		const memories = await memoryService.safeGetUserMemories(this.chat.userId, this.chat.projectId, this.chat.id);
 		const userRules = getUserRules(this._toolContext.projectFolder);
 		const connections = getConnections(this._toolContext.projectFolder);
-		const skills = skillService.getSkills();
+		const skills = skillService.getSkills(this.chat.projectId);
+		const mcpServers = await mcpService.getEnabledServers(this.chat.projectId);
 		const basePrompt = renderToMarkdown(
-			SystemPrompt({ memories, userRules, connections, skills, timezone, testMode: this.chat.testMode }),
+			SystemPrompt({
+				memories,
+				userRules,
+				connections,
+				skills,
+				mcpServers,
+				timezone,
+				testMode: this.chat.testMode,
+			}),
 		);
 		const renderedPrompt = provider
 			? renderToMarkdown(MessagingProviderSystemPrompt({ basePrompt, provider, chatUrl }))
@@ -659,10 +719,10 @@ class AgentManager {
 				}),
 			}),
 			maxOutputTokens: 60,
-			...langfuseTelemetry('nao-title', {
-				chatId: this.chat.id,
-				projectId: this.chat.projectId,
+			experimental_telemetry: llmTelemetry('nao-generate-title', {
+				sessionId: this.chat.id,
 				userId: this.chat.userId,
+				tags: [provider],
 			}),
 		});
 
@@ -782,7 +842,9 @@ class AgentManager {
 
 	private _addSkills(messages: UIMessage[], mentions?: Mention[]): UIMessage[] {
 		const skillMention = mentions?.find((m) => m.trigger === '/');
-		const skillContent = skillMention ? skillService.getSkillContent(skillMention.id) : undefined;
+		const skillContent = skillMention
+			? skillService.getSkillContent(this.chat.projectId, skillMention.id)
+			: undefined;
 		if (!skillContent) {
 			return messages;
 		}
@@ -913,7 +975,6 @@ async function resolveImageUrls<T extends MessageLike>(messages: T[]): Promise<T
 				return part;
 			}
 			const base64Data = imageDataMap.get(match[1]);
-			console.log(`[debug] base64Data for ${match[1]}: ${base64Data}`);
 			if (!base64Data) {
 				return part;
 			}

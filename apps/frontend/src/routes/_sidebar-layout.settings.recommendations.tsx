@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { createFileRoute } from '@tanstack/react-router';
-import { useEffect, useRef, useState } from 'react';
+import { ArrowDown, ArrowUp, X } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 
 import type { LlmProvider } from '@nao/shared/types';
 
@@ -17,15 +18,18 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { SidePanelProvider } from '@/contexts/side-panel';
 import { useSidePanel } from '@/hooks/use-side-panel';
-import { requireAdmin } from '@/lib/require-admin';
+import { requireContextAdminOrAdmin } from '@/lib/require-admin';
 import { trpc } from '@/main';
 
 export const Route = createFileRoute('/_sidebar-layout/settings/recommendations')({
-	beforeLoad: requireAdmin,
+	beforeLoad: requireContextAdminOrAdmin,
 	component: RecommendationsPage,
 });
 
 const SNOOZE_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** How long a run must be in progress before the cancel escape hatch appears. */
+const RUN_CANCEL_THRESHOLD_MS = 60 * 1000;
 
 const FREQUENCY_OPTIONS = [
 	{ value: 'daily', label: 'Daily' },
@@ -34,6 +38,8 @@ const FREQUENCY_OPTIONS = [
 ] as const;
 
 type Frequency = (typeof FREQUENCY_OPTIONS)[number]['value'];
+
+type SortOrder = 'newest' | 'oldest';
 
 const MAX_AUTO_PR_OPTIONS = [1, 2, 3, 5, 10] as const;
 const DEFAULT_MAX_AUTO_PRS = 3;
@@ -46,12 +52,20 @@ function localRunTime(): string {
 	return at.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 }
 
+function sortByCreatedAt<T extends { createdAt: string | number | Date }>(items: T[], order: SortOrder): T[] {
+	return [...items].sort((a, b) => {
+		const diff = new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+		return order === 'newest' ? diff : -diff;
+	});
+}
+
 function RecommendationsPage() {
 	const queryClient = useQueryClient();
 	const containerRef = useRef<HTMLDivElement>(null);
 	const sidePanelRef = useRef<HTMLDivElement>(null);
 	const [customSystemPromptInstructions, setCustomSystemPromptInstructions] = useState('');
 	const [customSystemPromptInstructionsEnabled, setCustomSystemPromptInstructionsEnabled] = useState(false);
+	const [sortOrder, setSortOrder] = useState<SortOrder>('newest');
 	const sidePanel = useSidePanel({
 		containerRef,
 		sidePanelRef,
@@ -75,11 +89,33 @@ function RecommendationsPage() {
 	const setConfig = useMutation(trpc.contextRecommendation.setConfig.mutationOptions());
 	const setStatus = useMutation(trpc.contextRecommendation.setStatus.mutationOptions());
 	const run = useMutation(trpc.contextRecommendation.run.mutationOptions());
+	const cancelRun = useMutation(trpc.contextRecommendation.cancelRun.mutationOptions());
 
-	const isRunning = run.isPending || latestRun.data?.status === 'running';
+	const runningRun = latestRun.data?.status === 'running' ? latestRun.data : null;
+	const isRunning = run.isPending || runningRun !== null;
+
+	const [nowMs, setNowMs] = useState(() => Date.now());
+	useEffect(() => {
+		if (!runningRun) {
+			return;
+		}
+		const interval = setInterval(() => setNowMs(Date.now()), 1000);
+		return () => clearInterval(interval);
+	}, [runningRun]);
+
+	const canCancelRun =
+		runningRun !== null && nowMs - new Date(runningRun.startedAt).getTime() >= RUN_CANCEL_THRESHOLD_MS;
 
 	const handleRun = async () => {
 		await run.mutateAsync();
+		queryClient.invalidateQueries({ queryKey: trpc.contextRecommendation.latestRun.queryKey() });
+	};
+
+	const handleCancelRun = async () => {
+		if (!runningRun) {
+			return;
+		}
+		await cancelRun.mutateAsync({ runId: runningRun.id });
 		queryClient.invalidateQueries({ queryKey: trpc.contextRecommendation.latestRun.queryKey() });
 	};
 
@@ -104,8 +140,15 @@ function RecommendationsPage() {
 	};
 
 	const selectedFrequency: Frequency = config.data?.frequency ?? 'weekly';
-	const activeRecommendations = recommendations.data?.filter((rec) => rec.status === 'open') ?? [];
+	const activeRecommendations = useMemo(
+		() => recommendations.data?.filter((rec) => rec.status === 'open') ?? [],
+		[recommendations.data],
+	);
 	const handledRecommendations = recommendations.data?.filter((rec) => rec.status !== 'open') ?? [];
+	const sortedActiveRecommendations = useMemo(
+		() => sortByCreatedAt(activeRecommendations, sortOrder),
+		[activeRecommendations, sortOrder],
+	);
 	const savedCustomSystemPromptInstructions = config.data?.customSystemPromptInstructions ?? '';
 	const hasCustomSystemPromptInstructionsChanges =
 		customSystemPromptInstructions.trim() !== savedCustomSystemPromptInstructions.trim();
@@ -210,10 +253,28 @@ function RecommendationsPage() {
 						description="Diagnostic suggestions for improving this project's context, mined from real usage."
 						action={
 							<div className='flex flex-col items-end gap-1'>
-								<Button size='sm' onClick={handleRun} disabled={isRunning}>
-									{isRunning && <Spinner className='size-4' />}
-									{isRunning ? 'Running…' : 'Run now'}
-								</Button>
+								<div className='flex items-center gap-2'>
+									{canCancelRun && (
+										<Button
+											size='sm'
+											variant='ghost'
+											className='gap-1.5 text-muted-foreground hover:text-destructive'
+											onClick={handleCancelRun}
+											disabled={cancelRun.isPending}
+										>
+											{cancelRun.isPending ? (
+												<Spinner className='size-4' />
+											) : (
+												<X className='size-4' />
+											)}
+											{cancelRun.isPending ? 'Cancelling…' : 'Cancel'}
+										</Button>
+									)}
+									<Button size='sm' onClick={handleRun} disabled={isRunning}>
+										{isRunning && <Spinner className='size-4' />}
+										{isRunning ? 'Running…' : 'Run now'}
+									</Button>
+								</div>
 								{latestRun.data ? (
 									<span className='text-xs text-muted-foreground italic'>
 										Latest {new Date(latestRun.data.startedAt).toLocaleString()}
@@ -376,6 +437,21 @@ function RecommendationsPage() {
 					<SettingsCard
 						title='Recommendations'
 						description='Ranked by impact. Act on each, then re-run to refresh.'
+						action={
+							<Button
+								size='sm'
+								variant='ghost'
+								className='gap-1 text-xs text-muted-foreground'
+								onClick={() => setSortOrder((order) => (order === 'newest' ? 'oldest' : 'newest'))}
+							>
+								Created at
+								{sortOrder === 'newest' ? (
+									<ArrowDown className='size-3.5' />
+								) : (
+									<ArrowUp className='size-3.5' />
+								)}
+							</Button>
+						}
 					>
 						{recommendations.isLoading ? (
 							<div className='flex justify-center p-4'>
@@ -389,8 +465,8 @@ function RecommendationsPage() {
 							<Empty>No recommendations yet. They appear after the next analysis run.</Empty>
 						) : (
 							<div className='flex flex-col gap-3'>
-								{activeRecommendations.length > 0 ? (
-									activeRecommendations.map((rec) => (
+								{sortedActiveRecommendations.length > 0 ? (
+									sortedActiveRecommendations.map((rec) => (
 										<RecommendationCard
 											key={rec.id}
 											recommendation={rec}
@@ -435,7 +511,6 @@ function RecommendationsPage() {
 						isAnimating={sidePanel.isAnimating}
 						sidePanelRef={sidePanelRef}
 						resizeHandleRef={sidePanel.resizeHandleRef}
-						onClose={sidePanel.close}
 					>
 						{sidePanel.content}
 					</SidePanel>

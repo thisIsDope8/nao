@@ -1,7 +1,10 @@
+import type { DateFormatSettings } from '@nao/shared/date';
 import type { displayChart } from '@nao/shared/tools';
 import { z } from 'zod/v4';
 
 import { generateChartImage } from '../components/generate-chart';
+import * as automationQueries from '../queries/automation.queries';
+import * as projectQueries from '../queries/project.queries';
 import * as storyQueries from '../queries/story.queries';
 import type { AutomationIntegrationConfig } from '../types/automation';
 import type { EmailAttachment } from '../types/email';
@@ -39,15 +42,48 @@ type AutomationToolInput = {
 	chatId: string;
 	githubToken: string | null;
 	integrations: AutomationIntegrationConfig;
+	automationId?: string;
+	currentRunId?: string;
 };
 
 export function createAutomationTools(input: AutomationToolInput): Record<string, unknown> {
 	return {
-		...createEmailTools(input.integrations),
+		...createHistoryTools(input.automationId, input.currentRunId),
+		...createEmailTools(input.projectId, input.integrations),
 		...createSlackTools(input.projectId, input.chatId, input.integrations),
 		...createGithubAutomationTools({
 			githubToken: input.githubToken,
 			config: input.integrations.github ?? { enabled: false, repositories: [] },
+		}),
+	};
+}
+
+function createHistoryTools(automationId?: string, currentRunId?: string): Record<string, unknown> {
+	if (!automationId) {
+		return {};
+	}
+
+	return {
+		get_automation_run_history: createTool({
+			description: [
+				'Look up what previous runs of THIS automation already did, so you avoid repeating work',
+				'If the user asks for the history, review it before deciding what is new and worth reporting.',
+			].join(' '),
+			inputSchema: z.object({
+				limit: z
+					.number()
+					.int()
+					.min(1)
+					.max(50)
+					.default(10)
+					.describe('How many of the most recent past runs to return.'),
+			}),
+			execute: async ({ limit }) => ({
+				runs: await automationQueries.getAutomationRunHistory(automationId, {
+					limit,
+					excludeRunId: currentRunId,
+				}),
+			}),
 		}),
 	};
 }
@@ -96,7 +132,7 @@ export function getRequiredGithubAutomationToolNames(integrations: AutomationInt
 	return getRequiredGithubToolNames(integrations.github);
 }
 
-function createEmailTools(integrations: AutomationIntegrationConfig): Record<string, unknown> {
+function createEmailTools(projectId: string, integrations: AutomationIntegrationConfig): Record<string, unknown> {
 	const config = integrations.email;
 	if (!config?.enabled) {
 		return {};
@@ -115,7 +151,7 @@ function createEmailTools(integrations: AutomationIntegrationConfig): Record<str
 				if (!emailService.isEnabled()) {
 					throw new Error('SMTP email is not configured.');
 				}
-				const attachments = await buildGeneratedArtifactAttachments(context);
+				const attachments = await buildGeneratedArtifactAttachments(projectId, context);
 				const content = appendInlineChartImages(html ?? `<pre>${escapeHtml(text ?? '')}</pre>`, attachments);
 				const emailAttachments = attachments.map(toEmailAttachment);
 				const resolvedSubject = config.subject ?? subject ?? 'nao automation report';
@@ -145,16 +181,34 @@ function createSlackTools(
 		return {};
 	}
 
+	// Charts/stories accumulate across the run; track which ones were already
+	// uploaded so multiple thread replies don't re-attach the same files.
+	const uploadedArtifacts = new Set<string>();
+
 	return {
 		send_automation_slack_message: createTool({
 			description: getSlackToolDescription(config.channelId),
 			inputSchema: z.object({
 				text: z.string().min(1),
+				thread_id: z
+					.string()
+					.optional()
+					.describe(
+						'Reuse the `threadId` returned by a previous call to post this message inside that thread instead of the channel.',
+					),
 			}),
-			execute: async ({ text }, context: ToolContext) => {
-				const result = await slackService.postMessage(projectId, config.channelId, text, { chatId });
-				const attachments = await buildGeneratedArtifactAttachments(context);
+			execute: async ({ text, thread_id }, context: ToolContext) => {
+				const result = await slackService.postMessage(projectId, config.channelId, text, {
+					chatId,
+					threadId: thread_id,
+				});
+				const attachments = (await buildGeneratedArtifactAttachments(projectId, context)).filter(
+					(attachment) => !uploadedArtifacts.has(attachment.filename),
+				);
 				await slackService.uploadFiles(projectId, result.threadId, attachments.map(toSlackFileUpload));
+				for (const attachment of attachments) {
+					uploadedArtifacts.add(attachment.filename);
+				}
 				return { ok: true, ...result, attachments: attachments.map((attachment) => attachment.filename) };
 			},
 		}),
@@ -166,7 +220,12 @@ function getEmailToolDescription(): string {
 }
 
 function getSlackToolDescription(channelId: string): string {
-	return `Post a message in the Slack channel ${channelId}. Provide the markdown-friendly text to post. Use @slack-handle to mention a Slack user.`;
+	return [
+		`Post a message in the Slack channel ${channelId}. Provide the markdown-friendly text to post. Use @slack-handle to mention a Slack user.`,
+		'To avoid cluttering the channel, post a single short headline message first (no thread_id), then reply with the full report inside its thread by passing the returned threadId as thread_id.',
+		'The call returns a threadId; reuse it as thread_id for every follow-up message so they stay in the same thread.',
+		'Generated charts and stories are uploaded to the thread automatically.',
+	].join(' ');
 }
 
 type GeneratedArtifactAttachment = Omit<EmailAttachment, 'content'> & {
@@ -192,13 +251,21 @@ function toSlackFileUpload(attachment: GeneratedArtifactAttachment): SlackFileUp
 	};
 }
 
-async function buildGeneratedArtifactAttachments(context: ToolContext): Promise<GeneratedArtifactAttachment[]> {
-	const chartAttachments = await buildChartImageAttachments(context);
-	const storyAttachments = await buildStoryPdfAttachments(context);
+async function buildGeneratedArtifactAttachments(
+	projectId: string,
+	context: ToolContext,
+): Promise<GeneratedArtifactAttachment[]> {
+	const displaySettings = await projectQueries.getDisplaySettings(projectId);
+	const dateFormat = displaySettings.dateFormat ?? null;
+	const chartAttachments = await buildChartImageAttachments(context, dateFormat);
+	const storyAttachments = await buildStoryPdfAttachments(context, dateFormat);
 	return [...chartAttachments, ...storyAttachments];
 }
 
-async function buildChartImageAttachments(context: ToolContext): Promise<GeneratedArtifactAttachment[]> {
+async function buildChartImageAttachments(
+	context: ToolContext,
+	dateFormat: DateFormatSettings | null,
+): Promise<GeneratedArtifactAttachment[]> {
 	const charts = uniqueCharts(context.generatedArtifacts.charts);
 	const attachments: GeneratedArtifactAttachment[] = [];
 
@@ -213,7 +280,7 @@ async function buildChartImageAttachments(context: ToolContext): Promise<Generat
 			kind: 'chart',
 			title,
 			filename: sanitizeFilename(title, `chart-${index + 1}`, 'png'),
-			content: generateChartImage({ config: chart, data: queryResult.data }),
+			content: generateChartImage({ config: chart, data: queryResult.data, dateFormat }),
 			contentType: 'image/png',
 			cid: `automation-chart-${index}-${crypto.randomUUID()}@nao`,
 		});
@@ -222,7 +289,10 @@ async function buildChartImageAttachments(context: ToolContext): Promise<Generat
 	return attachments;
 }
 
-async function buildStoryPdfAttachments(context: ToolContext): Promise<GeneratedArtifactAttachment[]> {
+async function buildStoryPdfAttachments(
+	context: ToolContext,
+	dateFormat: DateFormatSettings | null,
+): Promise<GeneratedArtifactAttachment[]> {
 	const stories = uniqueStories(context.generatedArtifacts.stories);
 
 	return Promise.all(
@@ -233,7 +303,7 @@ async function buildStoryPdfAttachments(context: ToolContext): Promise<Generated
 			}
 
 			const queryData = await getStoryQueryData(context, latest.code);
-			const pdf = await buildDownloadResponse('pdf', latest.title, latest.code, queryData);
+			const pdf = await buildDownloadResponse('pdf', latest.title, latest.code, queryData, dateFormat);
 			return {
 				kind: 'story',
 				title: latest.title,
@@ -297,7 +367,7 @@ function appendInlineChartImages(html: string, attachments: GeneratedArtifactAtt
 	return `${html}${chartSection}`;
 }
 
-function uniqueCharts(charts: displayChart.Input[]): displayChart.Input[] {
+function uniqueCharts(charts: displayChart.ChartInput[]): displayChart.ChartInput[] {
 	const seen = new Set<string>();
 	return charts.filter((chart) => {
 		const key = JSON.stringify(chart);

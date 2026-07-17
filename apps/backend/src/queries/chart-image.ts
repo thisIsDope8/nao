@@ -1,10 +1,11 @@
 import { displayChart, executeSql } from '@nao/shared/tools';
-import { and, eq, sql } from 'drizzle-orm';
+import { and, asc, eq, isNull, sql } from 'drizzle-orm';
 
 import s from '../db/abstractSchema';
 import { db } from '../db/db';
 import dbConfig, { Dialect } from '../db/dbConfig';
 import { takeFirstOrThrow } from '../utils/queries';
+import { selectLatestDisplayChartTableFormats } from './chart-image.utils';
 
 const DISPLAY_CHART_TOOL_TYPE = 'tool-display_chart';
 
@@ -19,7 +20,7 @@ export const getChartById = async (id: string): Promise<string> => {
 	return result.data;
 };
 
-export const getChartConfigByToolCallId = async (toolCallId: string): Promise<displayChart.Input> => {
+export const getDisplayConfigByToolCallId = async (toolCallId: string): Promise<displayChart.Input> => {
 	const result = await takeFirstOrThrow(
 		db
 			.select({ toolInput: s.messagePart.toolInput })
@@ -69,10 +70,12 @@ export const saveChart = async (toolCallId: string, data: string): Promise<strin
 	return row.id;
 };
 
-/** Returns the project owner of the chat that contains the given chart tool call. */
-export const getChartOwnerInfo = async (toolCallId: string): Promise<{ projectId: string; userId: string } | null> => {
+/** Returns the project owner and parent chat of the chat that contains the given chart tool call. */
+export const getChartOwnerInfo = async (
+	toolCallId: string,
+): Promise<{ projectId: string; userId: string; chatId: string } | null> => {
 	const [row] = await db
-		.select({ projectId: s.chat.projectId, userId: s.chat.userId })
+		.select({ projectId: s.chat.projectId, userId: s.chat.userId, chatId: s.chat.id })
 		.from(s.messagePart)
 		.innerJoin(s.chatMessage, eq(s.messagePart.messageId, s.chatMessage.id))
 		.innerJoin(s.chat, eq(s.chatMessage.chatId, s.chat.id))
@@ -81,7 +84,6 @@ export const getChartOwnerInfo = async (toolCallId: string): Promise<{ projectId
 	return row ?? null;
 };
 
-/** Persists an updated `display_chart` config for the given tool call. */
 export const updateChartConfig = async (toolCallId: string, config: displayChart.Input): Promise<void> => {
 	await db.transaction(async (tx) => {
 		await tx
@@ -96,6 +98,26 @@ export const updateChartConfig = async (toolCallId: string, config: displayChart
 			.where(eq(s.message_part_chart_image.toolCallId, toolCallId))
 			.execute();
 	});
+};
+
+export const getDisplayChartTableFormatsForChat = async (
+	chatId: string,
+): Promise<Record<string, displayChart.ColumnConditionalFormats>> => {
+	const rows = await db
+		.select({ toolInput: s.messagePart.toolInput })
+		.from(s.messagePart)
+		.innerJoin(s.chatMessage, eq(s.messagePart.messageId, s.chatMessage.id))
+		.where(
+			and(
+				eq(s.chatMessage.chatId, chatId),
+				eq(s.messagePart.type, DISPLAY_CHART_TOOL_TYPE),
+				isNull(s.chatMessage.supersededAt),
+			),
+		)
+		.orderBy(asc(s.chatMessage.createdAt), asc(s.messagePart.order))
+		.execute();
+
+	return selectLatestDisplayChartTableFormats(rows);
 };
 
 function getDisplayChartToolCallFilter(toolCallId: string) {

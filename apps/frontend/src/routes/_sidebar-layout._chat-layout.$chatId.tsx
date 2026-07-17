@@ -1,7 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { createFileRoute, Link, useRouter } from '@tanstack/react-router';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Folder, GitFork, Globe, TimerIcon, Upload } from 'lucide-react';
+import { Folder, GitFork, Globe, ScanText, TimerIcon, Upload } from 'lucide-react';
 import type { ForkMetadata } from '@nao/backend/chat';
 import type { SelectionData } from '@/components/highlight-bubble';
 import { NEW_CHAT_ID } from '@/lib/ai';
@@ -20,12 +20,14 @@ import { useSidePanel } from '@/hooks/use-side-panel';
 import { SidePanelProvider } from '@/contexts/side-panel';
 import { EditableChatTitle } from '@/components/editable-chat-title';
 import { useChatQuery } from '@/queries/use-chat-query';
+import { AssetAnalyticsDialog } from '@/components/asset-analytics-dialog';
 import { ShareChatDialog } from '@/components/share-dialog.chat';
 import { usePermissions } from '@/hooks/use-permissions';
 import { trpc } from '@/main';
 import { SelectionProvider } from '@/contexts/text-selection';
 import { chatPendingCitationStore } from '@/stores/chat-pending-citation';
 import { useSetChatInputCallback } from '@/contexts/set-chat-input-callback';
+import { useTrackViewDuration } from '@/hooks/use-track-view-duration';
 import { getTextOffset } from '@/lib/selection-dom.utils';
 
 export const Route = createFileRoute('/_sidebar-layout/_chat-layout/$chatId')({
@@ -54,8 +56,20 @@ function ChatPage() {
 	const { isLoadingMessages, isRunning } = useAgentContext();
 	const router = useRouter();
 	const { chatId } = Route.useParams();
+	const { role, canViewChatReplay } = usePermissions();
 	const chat = useChatQuery({ chatId });
 	const title = chat.data?.title;
+
+	const isForbidden = chat.isError && isForbiddenError(chat.error);
+	const shouldRedirectToReplay = isForbidden && canViewChatReplay;
+	const isResolvingReplayRedirect = isForbidden && role === undefined;
+
+	useEffect(() => {
+		if (shouldRedirectToReplay) {
+			router.navigate({ to: '/settings/chats-replay', search: { chatId }, replace: true });
+		}
+	}, [shouldRedirectToReplay, chatId, router]);
+
 	const shareQuery = useQuery({
 		...trpc.sharedChat.getShareOptionsByChatId.queryOptions({ chatId }),
 		enabled: chat.isSuccess,
@@ -70,7 +84,10 @@ function ChatPage() {
 
 	const sidePanel = useSidePanel({ containerRef, sidePanelRef });
 	const [isShareDialogOpen, setIsShareDialogOpen] = useState(false);
+	const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
 	const chatInputCallback = useSetChatInputCallback();
+
+	useTrackViewDuration({ assetType: 'chat', chatId });
 
 	const handleSelectionAsk = useCallback(
 		(data: SelectionData) => {
@@ -106,6 +123,9 @@ function ChatPage() {
 	}, [chat.isError, isLoadingMessages]); // eslint-disable-line react-hooks/exhaustive-deps
 
 	if (chat.isError) {
+		if (shouldRedirectToReplay || isResolvingReplayRedirect) {
+			return null;
+		}
 		return <ChatNotFoundState />;
 	}
 
@@ -155,8 +175,11 @@ function ChatPage() {
 									<Badge variant='outline' className='gap-1 text-muted-foreground w-fit'>
 										<GitFork />
 										<span className='truncate'>
-											{chat.data.forkMetadata.type === 'story' ? 'Story' : 'Chat'} thread
-											from{' '}
+											{chat.data.forkMetadata.type === 'story' ||
+											chat.data.forkMetadata.type === 'story_selection'
+												? 'Story'
+												: 'Chat'}{' '}
+											thread from{' '}
 										</span>
 										<span className='text-xs text-foreground'>
 											{chat.data.forkMetadata.authorName}
@@ -170,21 +193,38 @@ function ChatPage() {
 									</Badge>
 								)}
 							</div>
-							<div className='flex items-center gap-2'>
-								<StoryOpenButton variant='ghost' />
+							<div className='flex items-center justify-end gap-2'>
 								<Button
 									variant='ghost'
 									size='icon-sm'
+									className='hover:rounded-full'
+									onClick={() => setIsAnalyticsOpen(true)}
+									disabled={isRunning}
+									aria-label='Analytics'
+								>
+									<ScanText className='size-3' />
+								</Button>
+								<Button
+									variant='outline'
+									size='icon-sm'
+									className='rounded-full hover:rounded-full border w-auto px-2'
 									onClick={() => setIsShareDialogOpen(true)}
 									disabled={isRunning}
 									aria-label='Share Chat'
 								>
 									{!isRunning && isShared ? (
-										<Globe className='size-3 text-emerald-600' />
+										<>
+											<Globe className='size-3 text-primary' />
+											<span className='text-xs'>Chat shared</span>
+										</>
 									) : (
-										<Upload className='size-3' />
+										<>
+											<Upload className='size-3' strokeWidth={2.25} />
+											<span className='text-xs'>Share chat</span>
+										</>
 									)}
 								</Button>
+								<StoryOpenButton variant='outline' />
 							</div>
 						</div>
 
@@ -213,7 +253,6 @@ function ChatPage() {
 							isAnimating={sidePanel.isAnimating}
 							sidePanelRef={sidePanelRef}
 							resizeHandleRef={sidePanel.resizeHandleRef}
-							onClose={sidePanel.close}
 						>
 							{sidePanel.content}
 						</SidePanel>
@@ -221,6 +260,12 @@ function ChatPage() {
 				</div>
 			</SelectionProvider>
 			<ShareChatDialog open={isShareDialogOpen} onOpenChange={setIsShareDialogOpen} chatId={chatId} />
+			<AssetAnalyticsDialog
+				open={isAnalyticsOpen}
+				onOpenChange={setIsAnalyticsOpen}
+				assetType='chat'
+				chatId={chatId}
+			/>
 		</SidePanelProvider>
 	);
 }
@@ -266,6 +311,14 @@ function resolveStoryCitationMeta(
 	}
 
 	return { storySlug: currentStorySlug, start, end };
+}
+
+function isForbiddenError(error: unknown): boolean {
+	if (typeof error !== 'object' || error === null || !('data' in error)) {
+		return false;
+	}
+	const { data } = error as { data?: { code?: string } | null };
+	return data?.code === 'FORBIDDEN';
 }
 
 function buildHeaderCitation(meta: ForkMetadata | undefined): { citation: string; text: string } | null {

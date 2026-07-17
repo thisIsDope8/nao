@@ -132,6 +132,7 @@ class TelegramService {
 			convMessage: null,
 			blocks: [],
 			textBlockIndex: -1,
+			textBlockCount: 0,
 			isNewChat: false,
 			modelId: undefined,
 			timezone: undefined,
@@ -217,7 +218,7 @@ class TelegramService {
 
 	private async _checkUserBelongsToProject(ctx: ConversationContext): Promise<void> {
 		const role = await projectQueries.getUserRoleInProject(this._projectId, ctx.user!.id);
-		if (role !== 'admin' && role !== 'user') {
+		if (role !== 'admin' && role !== 'user' && role !== 'context_admin') {
 			await ctx.thread.post(
 				"❌ You don't have permission to use nao in this project. Please contact an administrator.",
 			);
@@ -369,12 +370,20 @@ class TelegramService {
 		if (part.state !== 'output-available' || state.renderedChartIds.has(part.toolCallId)) {
 			return;
 		}
+		if (part.input.chart_type === 'table') {
+			return;
+		}
 		const sqlOutput = state.sqlOutputs.get(part.input.query_id);
 		if (!sqlOutput) {
 			return;
 		}
 		try {
-			const png = generateChartImage({ config: part.input, data: sqlOutput.rows });
+			const displaySettings = await projectQueries.getDisplaySettings(this._projectId);
+			const png = generateChartImage({
+				config: part.input,
+				data: sqlOutput.rows,
+				dateFormat: displaySettings.dateFormat,
+			});
 			state.renderedChartIds.add(part.toolCallId);
 			ctx.textBlockIndex = -1;
 

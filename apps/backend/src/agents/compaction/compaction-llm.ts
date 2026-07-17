@@ -9,6 +9,7 @@ import { debugCompaction } from '../../utils/debug';
 import { langfuseTelemetry } from '../../utils/langfuse';
 import { stripImageParts } from '../../utils/model-message';
 import { type ProviderModelResult } from '../providers';
+import { llmTelemetry } from '../telemetry';
 
 export const MAX_OUTPUT_TOKENS = 16_000;
 
@@ -31,7 +32,7 @@ export class CompactionLLM implements ICompactionLLM {
 			...this._model,
 			messages: modelMessages,
 			maxOutputTokens: MAX_OUTPUT_TOKENS,
-			...langfuseTelemetry('nao-compaction'),
+			experimental_telemetry: llmTelemetry('nao-compaction'),
 		});
 
 		return { summary: text, usage: convertToTokenUsage(usage) };

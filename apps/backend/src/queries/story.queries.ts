@@ -19,7 +19,7 @@ export type UserStoryRow = Pick<
 	| 'archivedAt'
 	| 'createdAt'
 	| 'updatedAt'
-> & { code: string };
+> & { code: string; version: number };
 
 export async function getStoryByChatAndSlug(
 	chatId: string,
@@ -92,6 +92,7 @@ export async function getStoryByIdForUser(storyId: string, userId: string): Prom
 			createdAt: s.story.createdAt,
 			updatedAt: s.story.updatedAt,
 			code: s.storyVersion.code,
+			version: s.storyVersion.version,
 		})
 		.from(s.story)
 		.leftJoin(s.chat, eq(s.story.chatId, s.chat.id))
@@ -328,19 +329,6 @@ export async function assignChatToStory(storyId: string, chatId: string): Promis
 
 export async function archiveStory(chatId: string, slug: string): Promise<void> {
 	const matcher = and(eq(s.story.chatId, chatId), eq(s.story.slug, slug));
-	await db.update(s.story).set({ archivedAt: new Date() }).where(matcher).execute();
-	const ids = await db.select({ id: s.story.id }).from(s.story).where(matcher).execute();
-	await detachStoriesFromFolders(ids.map((row) => row.id));
-}
-
-export async function archiveManyStories(stories: { chatId: string; slug: string }[]): Promise<void> {
-	if (stories.length === 0) {
-		return;
-	}
-
-	const conditions = stories.map(({ chatId, slug }) => and(eq(s.story.chatId, chatId), eq(s.story.slug, slug)));
-	const matcher = or(...conditions);
-
 	await db.update(s.story).set({ archivedAt: new Date() }).where(matcher).execute();
 	const ids = await db.select({ id: s.story.id }).from(s.story).where(matcher).execute();
 	await detachStoriesFromFolders(ids.map((row) => row.id));
@@ -613,6 +601,7 @@ async function queryStoriesWithLatestVersion(
 			createdAt: s.story.createdAt,
 			updatedAt: s.story.updatedAt,
 			code: s.storyVersion.code,
+			version: s.storyVersion.version,
 		})
 		.from(s.story)
 		.leftJoin(s.chat, eq(s.story.chatId, s.chat.id))

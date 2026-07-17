@@ -1,51 +1,96 @@
 import { useState } from 'react';
+import { useMutation } from '@tanstack/react-query';
 import { Streamdown } from 'streamdown';
-import { ArrowUpRight, Code, Copy, Table as TableIcon } from 'lucide-react';
+import { ArrowUpRight, Code, Copy, Download, Palette, Table as TableIcon } from 'lucide-react';
 import { ToolCallWrapper } from './tool-call-wrapper';
 import { TableDisplay } from './display-table';
+import { TableFormatEditDialog } from './display-table-edit-dialog';
 import type { ToolCallComponentProps } from '.';
+import type { ColumnConditionalFormats } from '@nao/shared/conditional-formatting';
+import { useOptionalAgentContext } from '@/contexts/agent.provider';
 import { useSidePanel } from '@/contexts/side-panel';
 import { useToolCallContext } from '@/contexts/tool-call';
 import { SidePanelContent } from '@/components/side-panel/sql-editor';
+import { downloadCsv, tableToCsv } from '@/lib/table-export';
+import { trpc } from '@/main';
 
 type ViewMode = 'results' | 'query';
 
-export const ExecuteSqlToolCall = ({ toolPart: { output, input, state } }: ToolCallComponentProps<'execute_sql'>) => {
+export const ExecuteSqlToolCall = ({
+	toolPart: { output, input, state, toolCallId },
+}: ToolCallComponentProps<'execute_sql'>) => {
 	const [viewMode, setViewMode] = useState<ViewMode>('results');
+	const [conditionalFormats, setConditionalFormats] = useState<ColumnConditionalFormats>({});
+	const [isFormatOpen, setIsFormatOpen] = useState(false);
 	const { isSettled } = useToolCallContext();
 	const { open: openSidePanel } = useSidePanel();
+	const chatId = useOptionalAgentContext()?.chatId;
+	const logDownload = useMutation(trpc.analyticsEvent.logChatDownload.mutationOptions());
 
 	const actions = [
 		{
 			id: 'results',
-			label: <TableIcon className='size-3' />,
+			label: <TableIcon className='size-3 text-muted-foreground/70' strokeWidth={2.25} />,
 			expandOnClick: true,
 			isActive: viewMode === 'results',
 			onClick: () => setViewMode('results'),
+			title: 'View results',
 		},
 		{
 			id: 'query',
-			label: <Code className='size-3' />,
+			label: <Code className='size-3 text-muted-foreground/70' strokeWidth={2.25} />,
 			expandOnClick: true,
 			isActive: viewMode === 'query',
 			onClick: () => setViewMode('query'),
+			title: 'View query',
+		},
+		{
+			id: 'format',
+			label: <Palette className='size-3 text-muted-foreground/70' strokeWidth={2.25} />,
+			onClick: () => {
+				if (!output) {
+					return;
+				}
+				setViewMode('results');
+				setIsFormatOpen(true);
+			},
+			title: 'Conditional formatting',
 		},
 		{
 			id: 'copy',
-			label: <Copy className='size-3' />,
+			label: <Copy className='size-3 text-muted-foreground/70' strokeWidth={2.25} />,
 			onClick: () => {
 				navigator.clipboard.writeText(input?.sql_query ?? '');
 			},
+			title: 'Copy query',
+		},
+		{
+			id: 'download',
+			label: <Download className='size-3 text-muted-foreground/70' strokeWidth={2.25} />,
+			onClick: () => {
+				if (!output) {
+					return;
+				}
+				downloadCsv(
+					`${input?.name || 'query'}.csv`,
+					tableToCsv(output.columns, output.data as Record<string, unknown>[]),
+				);
+				if (chatId) {
+					logDownload.mutate({ chatId, format: 'csv', queryId: toolCallId, title: input?.name });
+				}
+			},
+			title: 'Download results as CSV',
 		},
 		{
 			id: 'expand',
-			label: <ArrowUpRight className='size-3' />,
+			label: <ArrowUpRight className='size-3 text-muted-foreground/70' strokeWidth={2.25} />,
 			onClick: () => {
 				if (state === 'input-streaming' || !output || !input) {
 					return;
 				}
 				openSidePanel(<SidePanelContent input={input} output={output} />);
 			},
+			title: 'Open in side panel',
 		},
 	];
 
@@ -54,8 +99,9 @@ export const ExecuteSqlToolCall = ({ toolPart: { output, input, state } }: ToolC
 			defaultExpanded={false}
 			overrideError={viewMode === 'query'}
 			title={
-				<span>
-					SQL <span className='text-xs font-normal truncate'>{input?.name ?? input?.sql_query}</span>
+				<span className='flex items-baseline gap-2.5'>
+					<span className='text-foreground'>SQL</span>
+					<span className='text-xs text-muted-foreground truncate'>{input?.name ?? input?.sql_query}</span>
 				</span>
 			}
 			badge={output?.row_count && `${output.row_count} rows`}
@@ -68,12 +114,25 @@ export const ExecuteSqlToolCall = ({ toolPart: { output, input, state } }: ToolC
 					</Streamdown>
 				</div>
 			) : output ? (
-				<TableDisplay
-					data={output.data as Record<string, unknown>[]}
-					columns={output.columns}
-					tableContainerClassName='max-h-80 rounded-none border-0 bg-transparent'
-					showRowCount={false}
-				/>
+				<>
+					<TableDisplay
+						data={output.data as Record<string, unknown>[]}
+						columns={output.columns}
+						tableContainerClassName='max-h-80 rounded-none border-0 bg-transparent'
+						maxRowsBeforePagination={10}
+						compactFooter
+						conditionalFormats={conditionalFormats}
+					/>
+					<TableFormatEditDialog
+						open={isFormatOpen}
+						onOpenChange={setIsFormatOpen}
+						columns={output.columns}
+						data={output.data as Record<string, unknown>[]}
+						formats={conditionalFormats}
+						onSave={async (next) => setConditionalFormats(next)}
+						description='Apply conditional formatting to columns of this result.'
+					/>
+				</>
 			) : (
 				<div className='p-4 text-center text-foreground/50 text-sm'>Executing query...</div>
 			)}

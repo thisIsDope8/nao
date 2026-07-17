@@ -1,6 +1,10 @@
-import { formatCellValue, isNumericColumn } from '@nao/shared/story-table-utils';
+import { computeColumnRange, isConditionalFormatRule, resolveCellBackground } from '@nao/shared/conditional-formatting';
+import { formatCellValue, formatColumnLabel, isNumericColumn } from '@nao/shared/story-table-utils';
 import { useEffect, useMemo, useState } from 'react';
+import type { ColumnConditionalFormats, ColumnRange, ConditionalFormatRule } from '@nao/shared/conditional-formatting';
 import { TablePagination } from '@/components/ui/table-pagination';
+import { useDateFormat } from '@/hooks/use-date-format';
+import { TablePaginationCompact } from '@/components/ui/table-pagination-compact';
 import { cn } from '@/lib/utils';
 
 type TableRow = Record<string, unknown>;
@@ -14,6 +18,9 @@ interface TableDisplayProps {
 	emptyLabel?: string;
 	showRowCount?: boolean;
 	maxRowsBeforePagination?: number;
+	compactFooter?: boolean;
+	conditionalFormats?: ColumnConditionalFormats;
+	humanizeColumnLabels?: boolean;
 }
 
 export function TableDisplay({
@@ -25,11 +32,20 @@ export function TableDisplay({
 	emptyLabel = 'No rows returned',
 	showRowCount = true,
 	maxRowsBeforePagination = 100,
+	compactFooter = false,
+	conditionalFormats,
+	humanizeColumnLabels = false,
 }: TableDisplayProps) {
+	const dateFormat = useDateFormat();
 	const resolvedColumns = columns && columns.length > 0 ? columns : inferColumns(data);
 	const numericColumns = new Set(resolvedColumns.filter((column) => isNumericColumn(data, column)));
 	const hasRows = data.length > 0;
-	const needsPagination = data.length > maxRowsBeforePagination;
+	const showPagination = hasRows && data.length > maxRowsBeforePagination;
+
+	const columnRanges = useMemo(
+		() => computeFormattedColumnRanges(data, conditionalFormats),
+		[data, conditionalFormats],
+	);
 
 	const [pageIndex, setPageIndex] = useState(0);
 	const [pageSize, setPageSize] = useState(maxRowsBeforePagination);
@@ -38,27 +54,28 @@ export function TableDisplay({
 
 	const pageCount = Math.ceil(data.length / pageSize);
 	const pageData = useMemo(
-		() => (needsPagination ? data.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize) : data),
-		[data, pageIndex, pageSize, needsPagination],
+		() => (showPagination ? data.slice(pageIndex * pageSize, (pageIndex + 1) * pageSize) : data),
+		[data, pageIndex, pageSize, showPagination],
 	);
 
 	return (
-		<div className={cn('flex min-h-0 flex-col gap-2', className)}>
+		<div className={cn('flex min-h-0 flex-col', className)}>
 			{title ? <span className='text-sm font-medium'>{title}</span> : null}
 
-			<div className={cn('overflow-auto rounded-lg border bg-card/50 min-h-0', tableContainerClassName)}>
+			<div className={cn('overflow-auto border-t bg-background min-h-0', tableContainerClassName)}>
 				<table className='w-full min-w-max border-collapse text-xs'>
 					<thead className='sticky top-0 z-10 border-b bg-panel'>
 						<tr>
+							<th className='shadow-[inset_-1px_0_0_0_var(--border)] last:shadow-none px-3 py-2 text-center font-medium whitespace-nowrap text-foreground w-4' />
 							{resolvedColumns.map((column) => (
 								<th
 									key={column}
 									className={cn(
-										'px-3 py-2 text-left font-medium whitespace-nowrap text-muted-foreground last:border-r-0',
+										'shadow-[inset_-1px_0_0_0_var(--border)] last:shadow-none px-3 py-2 text-left font-medium whitespace-nowrap text-foreground',
 										numericColumns.has(column) && 'text-right tabular-nums',
 									)}
 								>
-									{column}
+									{humanizeColumnLabels ? formatColumnLabel(column) : column}
 								</th>
 							))}
 						</tr>
@@ -71,21 +88,32 @@ export function TableDisplay({
 									key={rowIndex}
 									className='border-b last:border-b-0 border-border/50 bg-background  hover:bg-accent/30'
 								>
+									<td className='shadow-[inset_-1px_0_0_0_var(--border)] last:shadow-none px-3 py-1 align-top font-mono text-[11px] leading-5 whitespace-nowrap text-center w-4 bg-panel'>
+										<span className='px-1 py-2 font-[Geist] font-medium text-foreground'>
+											{pageIndex * pageSize + rowIndex + 1}
+										</span>
+									</td>
 									{resolvedColumns.map((column) => {
 										const value = row[column];
 										const isNull = value === null || value === undefined;
+										const background = resolveColumnCellBackground(
+											conditionalFormats?.[column],
+											value,
+											columnRanges[column] ?? null,
+										);
 										return (
 											<td
 												key={`${rowIndex}-${column}`}
+												style={background ? { backgroundColor: background } : undefined}
 												className={cn(
-													'border-border/40 px-3 py-1 align-top font-mono text-[11px] leading-5 whitespace-nowrap last:border-r-0',
+													'shadow-[inset_-1px_0_0_0_var(--border)] last:shadow-none px-3 py-1 align-top font-mono text-[11px] leading-5 whitespace-nowrap',
 													numericColumns.has(column) && 'text-right tabular-nums',
 												)}
 											>
 												{isNull ? (
 													<span className='italic text-muted-foreground/60'>NULL</span>
 												) : (
-													formatCellValue(value)
+													formatCellValue(value, dateFormat)
 												)}
 											</td>
 										);
@@ -95,7 +123,7 @@ export function TableDisplay({
 						) : (
 							<tr>
 								<td
-									colSpan={Math.max(resolvedColumns.length, 1)}
+									colSpan={resolvedColumns.length + 1}
 									className='px-3 py-6 text-center text-sm text-muted-foreground'
 								>
 									{emptyLabel}
@@ -106,25 +134,66 @@ export function TableDisplay({
 				</table>
 			</div>
 
-			{needsPagination ? (
-				<TablePagination
-					totalRows={data.length}
-					pageIndex={pageIndex}
-					pageSize={pageSize}
-					pageCount={pageCount}
-					onPageChange={setPageIndex}
-					onPageSizeChange={(size) => {
-						setPageSize(size);
-						setPageIndex(0);
-					}}
-				/>
+			{showPagination ? (
+				compactFooter ? (
+					<TablePaginationCompact
+						totalRows={data.length}
+						pageIndex={pageIndex}
+						pageSize={pageSize}
+						pageCount={pageCount}
+						onPageChange={setPageIndex}
+						onPageSizeChange={(size) => {
+							setPageSize(size);
+							setPageIndex(0);
+						}}
+					/>
+				) : (
+					<TablePagination
+						totalRows={data.length}
+						pageIndex={pageIndex}
+						pageSize={pageSize}
+						pageCount={pageCount}
+						onPageChange={setPageIndex}
+						onPageSizeChange={(size) => {
+							setPageSize(size);
+							setPageIndex(0);
+						}}
+					/>
+				)
 			) : showRowCount ? (
-				<div className='flex justify-end px-2'>
-					<span className='text-sm text-muted-foreground'>{data.length} rows</span>
+				<div className={cn('flex px-4 py-2 border-t', compactFooter ? 'justify-start' : 'justify-end')}>
+					<span className={cn('text-muted-foreground', compactFooter ? 'text-xs' : 'text-sm')}>
+						{data.length} rows
+					</span>
 				</div>
 			) : null}
 		</div>
 	);
+}
+
+function computeFormattedColumnRanges(
+	data: TableRow[],
+	conditionalFormats?: ColumnConditionalFormats,
+): Record<string, ColumnRange | null> {
+	if (!conditionalFormats) {
+		return {};
+	}
+
+	const ranges: Record<string, ColumnRange | null> = {};
+	for (const [column, rule] of Object.entries(conditionalFormats)) {
+		if (isConditionalFormatRule(rule) && rule.type === 'color-scale') {
+			ranges[column] = computeColumnRange(data, column);
+		}
+	}
+	return ranges;
+}
+
+function resolveColumnCellBackground(
+	rule: ConditionalFormatRule | undefined,
+	value: unknown,
+	range: ColumnRange | null,
+): string | undefined {
+	return isConditionalFormatRule(rule) ? resolveCellBackground(rule, value, range) : undefined;
 }
 
 function inferColumns(data: TableRow[]): string[] {

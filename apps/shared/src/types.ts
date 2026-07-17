@@ -1,6 +1,25 @@
-export type UserRole = 'admin' | 'user' | 'viewer';
+export type UserRole = 'admin' | 'user' | 'viewer' | 'context_admin';
 
-export const USER_ROLES = ['admin', 'user', 'viewer'] as const satisfies readonly UserRole[];
+export const USER_ROLES = ['admin', 'user', 'viewer', 'context_admin'] as const satisfies readonly UserRole[];
+
+/** Project roles available when editing organization members (org roles never include context_admin). */
+export const ORG_MEMBER_ROLES = ['admin', 'user', 'viewer'] as const satisfies readonly UserRole[];
+
+export const USER_ROLE_LABELS: Record<UserRole, string> = {
+	admin: 'Admin',
+	user: 'User',
+	viewer: 'Viewer',
+	context_admin: 'Context Admin',
+};
+
+export const TOOL_CALL_DENSITIES = ['compact', 'detailed'] as const;
+
+/** How much detail to show for tool calls in the chat. */
+export type ToolCallDensity = (typeof TOOL_CALL_DENSITIES)[number];
+
+export interface UserPreferences {
+	toolCallDensity?: ToolCallDensity;
+}
 
 export type UpdatedAtFilter = { mode: 'single'; value: string } | { mode: 'range'; start: string; end: string };
 
@@ -114,8 +133,26 @@ export type ProjectChatListItem = {
 };
 
 export type DownloadFormat = 'pdf' | 'html';
-
 export const DOWNLOAD_FORMATS = ['pdf', 'html'] as const satisfies readonly DownloadFormat[];
+
+export type ChatDownloadFormat = 'png' | 'csv';
+export const CHAT_DOWNLOAD_FORMATS = ['png', 'csv'] as const satisfies readonly ChatDownloadFormat[];
+
+export type AnalyticsDownloadFormat = DownloadFormat | ChatDownloadFormat;
+
+export const ANALYTICS_EVENT_TYPES = ['page_view', 'download', 'fork', 'favorite', 'refresh', 'view_duration'] as const;
+export const ANALYTICS_ASSET_TYPES = ['chat', 'story'] as const;
+
+export type AnalyticsEventType = (typeof ANALYTICS_EVENT_TYPES)[number];
+export type AnalyticsAssetType = (typeof ANALYTICS_ASSET_TYPES)[number];
+
+export type AnalyticsEventMetadata =
+	| { type: 'page_view'; versionNumber?: number }
+	| { type: 'download'; format: AnalyticsDownloadFormat; queryId?: string; versionNumber?: number; title?: string }
+	| { type: 'fork'; resultId: string; scope: 'full' | 'selection'; versionNumber?: number }
+	| { type: 'favorite'; favorited: boolean }
+	| { type: 'refresh'; trigger: 'manual' | 'scheduled'; queriesRefreshed?: number }
+	| { type: 'view_duration'; durationMs: number; startedAt: number; versionNumber?: number };
 
 export interface CitationData {
 	start: number;
@@ -170,3 +207,9 @@ export type EmbedTokenPayload = {
 };
 
 export type StoryPanelDisplayMode = 'grid' | 'lines';
+
+export const REPO_PROVIDERS = ['github', 'gitlab'] as const;
+export const BULK_ITEMS_LIMIT = 100;
+
+export type RepoProvider = (typeof REPO_PROVIDERS)[number];
+export type BulkStoryItem = { kind: 'own'; storyId: string } | { kind: 'shared-project'; storyId: string };

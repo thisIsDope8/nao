@@ -17,6 +17,7 @@ import {
 	resolveStory,
 } from './helpers';
 import { registerAgentToolAsMcp, registerMcpTool } from './register-mcp-tool';
+import { STORY_LIST_ITEM_SCHEMA, toStoryListItem } from './story-list-item';
 
 const DISPLAY_CHART_DESCRIPTION =
 	'Render an interactive chart embed from a previously executed query.\n\n' +
@@ -53,7 +54,7 @@ const STORY_ID_INPUT = z
 	.string()
 	.describe('Story UUID (from `list_stories.id` or `ask_nao.stories[].id`). Not the slug.');
 
-type DisplayChartMcpInput = displayChart.Input & { chat_id?: string };
+type DisplayChartMcpInput = displayChart.ChartInput & { chat_id?: string };
 
 export function registerAssetTools(server: McpServer, ctx: McpContext): void {
 	registerDisplayChart(server, ctx);
@@ -66,16 +67,18 @@ function registerDisplayChart(server: McpServer, ctx: McpContext): void {
 		agentTool: displayChartTool,
 		title: 'Display Chart',
 		description: DISPLAY_CHART_DESCRIPTION,
-		inputSchema: displayChart.InputSchema.extend({
-			chat_id: zodV3
-				.string()
-				.optional()
-				.describe(
-					'Optional chat UUID (e.g. `chatId` from `ask_nao`) to anchor the embed to a chat. ' +
-						"Used for the embed's `Open in nao` link and to track the source chat; " +
-						'nao resolves the rows automatically across the project even without it.',
-				),
-		}),
+		inputSchema: displayChart.ChartInputSchema.and(
+			zodV3.object({
+				chat_id: zodV3
+					.string()
+					.optional()
+					.describe(
+						'Optional chat UUID (e.g. `chatId` from `ask_nao`) to anchor the embed to a chat. ' +
+							"Used for the embed's `Open in nao` link and to track the source chat; " +
+							'nao resolves the rows automatically across the project even without it.',
+					),
+			}),
+		),
 		outputSchema: {
 			queryId: z
 				.string()
@@ -102,7 +105,8 @@ function registerDisplayChart(server: McpServer, ctx: McpContext): void {
 		mapInput: ({ chat_id: _chatId, ...input }) => input,
 		resolveChatId: (input) => input.chat_id ?? null,
 		formatResult: async ({ input, output, callLogId }) => {
-			const { query_id, chart_type, x_axis_key, x_axis_type, series, title, chat_id } = input;
+			const { query_id, chart_type, x_axis_key, x_axis_type, series, y_axis_min, y_axis_max, title, chat_id } =
+				input;
 			if (!output.success) {
 				return {
 					content: [{ type: 'text' as const, text: output.error ?? 'Chart config is invalid.' }],
@@ -112,7 +116,7 @@ function registerDisplayChart(server: McpServer, ctx: McpContext): void {
 
 			const validatedChatId = await resolveChartChatId(chat_id, ctx);
 			const result = await buildChartEmbedFromArtifact(
-				{ query_id, chart_type, x_axis_key, x_axis_type, series, title },
+				{ query_id, chart_type, x_axis_key, x_axis_type, series, y_axis_min, y_axis_max, title },
 				ctx,
 				{ chatId: validatedChatId ?? null, callLogId },
 			);
@@ -175,17 +179,7 @@ function registerStoryManagementTools(server: McpServer, ctx: McpContext): void 
 		},
 		outputSchema: {
 			stories: z
-				.array(
-					z.object({
-						id: z.string().describe('Story UUID.'),
-						title: z.string().describe('Story title.'),
-						url: z.url().describe('URL to open the story in the nao UI.'),
-						chatUrl: z.url().nullable().describe('Source chat URL, or null for standalone stories.'),
-						archived: z.boolean().describe('True if soft-deleted via `archive_story` (still recoverable).'),
-						createdAt: z.string().describe('ISO timestamp of creation.'),
-						updatedAt: z.string().describe('ISO timestamp of last edit.'),
-					}),
-				)
+				.array(STORY_LIST_ITEM_SCHEMA)
 				.describe('Stories visible to the current user in this project, newest first.'),
 		},
 		handler: async ({ limit, archived }) => {
@@ -193,15 +187,9 @@ function registerStoryManagementTools(server: McpServer, ctx: McpContext): void 
 				archived,
 				limit,
 			});
-			const result = stories.map((story) => ({
-				id: story.id,
-				title: story.title,
-				createdAt: story.createdAt,
-				updatedAt: story.updatedAt,
-				archived: story.archivedAt !== null,
-				url: storyUrl(story),
-				chatUrl: storyChatUrl(story),
-			}));
+			const result = stories.map((story) =>
+				toStoryListItem(story, { url: storyUrl(story), chatUrl: storyChatUrl(story) }),
+			);
 			const output = { stories: result };
 			return {
 				content: [{ type: 'text' as const, text: JSON.stringify(output) }],

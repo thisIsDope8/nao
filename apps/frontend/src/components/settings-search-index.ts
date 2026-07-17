@@ -6,7 +6,10 @@ export interface SettingsSearchEntry {
 	description?: string;
 	keywords?: string[];
 	adminOnly?: boolean;
+	/** Visible to admins and context admins (observability surfaces). */
+	adminOrContextAdmin?: boolean;
 	cloudHidden?: boolean;
+	cloudOnly?: boolean;
 	licenseRequired?: boolean;
 }
 
@@ -31,6 +34,14 @@ export const settingsSearchIndex: SettingsSearchEntry[] = [
 		page: '/settings/account',
 		pageLabel: 'Account',
 		section: 'General Settings',
+		title: 'Tool Call Density',
+		description: 'Adjust how much detail is shown for tool calls.',
+		keywords: ['compact', 'detailed', 'collapse', 'expand', 'tool calls', 'density', 'verbosity'],
+	},
+	{
+		page: '/settings/account',
+		pageLabel: 'Account',
+		section: 'General Settings',
 		title: 'Theme',
 		description: 'Choose how nao looks.',
 		keywords: ['dark mode', 'light mode', 'appearance', 'color scheme'],
@@ -38,9 +49,24 @@ export const settingsSearchIndex: SettingsSearchEntry[] = [
 	{
 		page: '/settings/account',
 		pageLabel: 'Account',
+		section: 'General Settings',
+		title: 'Newsletter',
+		description: 'Subscribe to nao product updates, release notes, and analytics agent tips.',
+		keywords: ['email', 'mail', 'subscribe', 'updates', 'release notes'],
+	},
+	{
+		page: '/settings/account',
+		pageLabel: 'Account',
 		title: 'GitHub',
 		description: 'Connect your GitHub account for automations.',
 		keywords: ['github', 'automations', 'automation', 'issue', 'pull request'],
+	},
+	{
+		page: '/settings/account',
+		pageLabel: 'Account',
+		title: 'GitLab',
+		description: 'Connect your GitLab account for automations.',
+		keywords: ['gitlab', 'automations', 'automation', 'merge request'],
 	},
 	{
 		page: '/settings/account',
@@ -71,6 +97,22 @@ export const settingsSearchIndex: SettingsSearchEntry[] = [
 		title: 'Import from GitHub',
 		description: 'Connect your GitHub account and import a repository as a project.',
 		keywords: ['github', 'repository', 'repo', 'import', 'git', 'integration', 'clone'],
+	},
+	{
+		page: '/settings/organization',
+		pageLabel: 'Organization',
+		title: 'Import from GitLab',
+		description: 'Connect your GitLab account and import a project as a nao project.',
+		keywords: ['gitlab', 'repository', 'repo', 'import', 'git', 'integration', 'clone', 'merge request'],
+	},
+	{
+		page: '/settings/organization',
+		pageLabel: 'Organization',
+		title: 'Sign-in domains',
+		description:
+			'Users who sign in with Google using one of these verified email domains automatically join this organization.',
+		keywords: ['sso', 'google', 'domain', 'email domain', 'allowlist', 'auto join', 'workspace', 'verified'],
+		cloudOnly: true,
 	},
 	{
 		page: '/settings/organization',
@@ -113,6 +155,25 @@ export const settingsSearchIndex: SettingsSearchEntry[] = [
 		keywords: ['google', 'bigquery', 'service account', 'gcp'],
 		adminOnly: true,
 	},
+	{
+		page: '/settings/project',
+		pageLabel: 'Project',
+		title: 'Date format',
+		description: 'Choose how dates are displayed in charts, tooltips and query result tables.',
+		keywords: [
+			'date',
+			'format',
+			'locale',
+			'european',
+			'american',
+			'iso',
+			'dd/mm/yyyy',
+			'mm/dd/yyyy',
+			'custom',
+			'pattern',
+		],
+		adminOnly: true,
+	},
 
 	// ── Project > Models ─────────────────────────────────────
 	{
@@ -121,6 +182,27 @@ export const settingsSearchIndex: SettingsSearchEntry[] = [
 		title: 'LLM Configuration',
 		description: 'Configure the LLM providers for the agent in this project.',
 		keywords: ['openai', 'anthropic', 'google', 'llm', 'model', 'provider', 'api key'],
+		adminOnly: true,
+	},
+	{
+		page: '/settings/project/models',
+		pageLabel: 'Models',
+		title: 'Model parameters',
+		description:
+			'Fine-tune per-model inference parameters like temperature, top_p, top_k, max tokens and thinking effort.',
+		keywords: [
+			'temperature',
+			'top_p',
+			'top p',
+			'top_k',
+			'top k',
+			'max tokens',
+			'thinking',
+			'reasoning',
+			'inference',
+			'sampling',
+			'claude',
+		],
 		adminOnly: true,
 	},
 	{
@@ -191,8 +273,9 @@ export const settingsSearchIndex: SettingsSearchEntry[] = [
 		page: '/settings/project/mcp-servers',
 		pageLabel: 'MCP Servers',
 		title: 'MCP Servers',
-		description: 'Integrate MCP servers to extend the capabilities of nao.',
-		keywords: ['model context protocol', 'tool', 'integration', 'extension'],
+		description:
+			'Configure MCP servers in agent/mcps/mcp.json. nao discovers their tools into OpenAPI specs the agent explores on demand.',
+		keywords: ['model context protocol', 'tool', 'integration', 'extension', 'discover', 'openapi', 'spec'],
 		adminOnly: true,
 	},
 
@@ -210,8 +293,8 @@ export const settingsSearchIndex: SettingsSearchEntry[] = [
 		section: 'MCP Modes',
 		title: 'Sub-agent mode',
 		description:
-			"Exposes ask_nao — delegates the full analytics task to nao's agent. The reasoning trace is saved as a chat in the nao UI.",
-		keywords: ['ask_nao', 'agent', 'analytics', 'delegate', 'sub-agent'],
+			"Exposes ask_nao and get_nao_answer — delegates the full analytics task to nao's agent. The reasoning trace is saved as a chat in the nao UI.",
+		keywords: ['ask_nao', 'get_nao_answer', 'agent', 'analytics', 'delegate', 'sub-agent'],
 	},
 	{
 		page: '/settings/mcp-endpoint',
@@ -373,7 +456,7 @@ export const settingsSearchIndex: SettingsSearchEntry[] = [
 		title: 'Chats Replay',
 		description: 'Replay and review past chat conversations.',
 		keywords: ['history', 'conversation', 'replay', 'review'],
-		adminOnly: true,
+		adminOrContextAdmin: true,
 	},
 
 	// ── Context Recommendations ──────────────────────────────
@@ -402,7 +485,7 @@ export const settingsSearchIndex: SettingsSearchEntry[] = [
 			'automatic',
 			'pr',
 		],
-		adminOnly: true,
+		adminOrContextAdmin: true,
 	},
 
 	// ── Logs ─────────────────────────────────────────────────
@@ -442,7 +525,7 @@ export const settingsSearchIndex: SettingsSearchEntry[] = [
 		page: '/settings/white-label',
 		pageLabel: 'White-label',
 		title: 'White-label branding',
-		description: 'Replace the nao name, logo and favicon with your own branding. Enterprise feature.',
+		description: 'Replace the nao name, logo, favicon and brand color with your own branding. Enterprise feature.',
 		keywords: [
 			'white label',
 			'whitelabel',
@@ -454,6 +537,30 @@ export const settingsSearchIndex: SettingsSearchEntry[] = [
 			'customize',
 			'signup',
 			'login',
+			'enterprise',
+			'color',
+			'colour',
+			'theme',
+			'primary',
+		],
+		adminOnly: true,
+		cloudHidden: true,
+	},
+	{
+		page: '/settings/white-label',
+		pageLabel: 'White-label',
+		section: 'Brand color',
+		title: 'Brand color',
+		description: 'Set a custom primary color for buttons, links and accents across the app.',
+		keywords: [
+			'color',
+			'colour',
+			'brand color',
+			'brand colour',
+			'primary color',
+			'theme color',
+			'accent',
+			'hex',
 			'enterprise',
 		],
 		adminOnly: true,

@@ -55,6 +55,7 @@ export const MESSAGE_SOURCES = [
 	'web',
 	'mcp',
 	'contextRecommendations',
+	'admin',
 ] as const;
 
 export type MessageSource = (typeof MESSAGE_SOURCES)[number];
@@ -65,7 +66,19 @@ export type UIMessage = UIGenericMessage<unknown, MessageCustomDataParts, UITool
 	isForked?: boolean;
 	citation?: CitationData;
 	stopReason?: StopReason;
+	/** Epoch milliseconds the message was created at. */
+	createdAt?: number;
+	/** Edit/resend version history for a user message turn. */
+	versionInfo?: MessageVersionInfo;
 };
+
+export interface MessageVersionInfo {
+	/** 1-based index of the active version among all versions of the turn. */
+	currentVersion: number;
+	totalVersions: number;
+	/** Message ids of every version, ordered oldest to newest. */
+	versionIds: string[];
+}
 
 export type UITools = InferUITools<typeof tools>;
 
@@ -171,4 +184,6 @@ export const AgentRequestSchema = z.object({
 	model: llmSelectedModelSchema.optional(),
 	mentions: z.array(MentionSchema).optional(),
 	timezone: z.string().optional(),
+	/** When true, the message runs in admin mode: it queries nao's own usage database instead of the warehouse. */
+	adminMode: z.boolean().optional(),
 });

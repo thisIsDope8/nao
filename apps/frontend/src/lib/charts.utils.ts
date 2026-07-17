@@ -1,4 +1,6 @@
+import { getToolName, isToolUIPart } from './ai';
 import { hashValue } from './hash';
+import type { UIMessage } from '@nao/backend/chat';
 
 export { labelize } from '@nao/shared';
 
@@ -87,3 +89,43 @@ function isValidDate(date: Date): boolean {
 export const toKey = (value: string) => {
 	return hashValue(value);
 };
+
+/**
+ * Resolves the tooltip header label for a pie slice from its Recharts payload.
+ *
+ * Pie tooltips have no axis label, so the header must come from the hovered
+ * slice's category name (the `nameKey` value) rather than the value data key.
+ */
+export function resolvePieTooltipLabel(payload?: readonly { name?: unknown }[]): string {
+	const name = payload?.[0]?.name;
+	return name == null ? '' : String(name);
+}
+
+/** Resolves a config key to the matching key in the data, ignoring case. Falls back to the original key. */
+export function resolveDataKey(data: Record<string, unknown>[], key: string): string {
+	const row = data[0];
+	if (!row || key in row) {
+		return key;
+	}
+	const lower = key.toLowerCase();
+	const match = Object.keys(row).find((dataKey) => dataKey.toLowerCase() === lower);
+	return match ?? key;
+}
+
+/** Counts the successfully rendered `display_chart` tool calls across a conversation. */
+export function countDisplayCharts(messages: UIMessage[]): number {
+	let count = 0;
+	for (const message of messages) {
+		for (const part of message.parts) {
+			if (
+				isToolUIPart(part) &&
+				getToolName(part) === 'display_chart' &&
+				part.state === 'output-available' &&
+				!(part.output as { error?: string } | undefined)?.error
+			) {
+				count++;
+			}
+		}
+	}
+	return count;
+}

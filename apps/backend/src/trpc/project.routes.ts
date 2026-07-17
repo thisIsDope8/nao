@@ -1,3 +1,4 @@
+import { DATE_FORMAT_PRESETS } from '@nao/shared/date';
 import type { LlmProvider } from '@nao/shared/types';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod/v4';
@@ -19,12 +20,18 @@ import { posthog, PostHogEvent } from '../services/posthog';
 import { slackService } from '../services/slack';
 import { listAvailableTranscribeModels as getAvailableTranscribeModels } from '../services/transcribe.service';
 import { AgentSettings } from '../types/agent-settings';
-import { customModelMetadataSchema, llmConfigSchema, llmProviderSchema } from '../types/llm';
+import { customModelMetadataSchema, llmConfigSchema, llmProviderSchema, modelSettingsMapSchema } from '../types/llm';
 import { isValidIsoDateString } from '../utils/date';
 import { getEnvApiKey, getEnvBaseUrls, getEnvProviders, getProjectAvailableModels } from '../utils/llm';
 import { extractRequiredEnvVars } from '../utils/nao-config';
 import { buildCredentialPreviews } from '../utils/utils';
-import { adminProtectedProcedure, projectProtectedProcedure, protectedProcedure, publicProcedure } from './trpc';
+import {
+	adminProtectedProcedure,
+	contextAdminProtectedProcedure,
+	projectProtectedProcedure,
+	protectedProcedure,
+	publicProcedure,
+} from './trpc';
 
 const isoDateString = z.string().refine(isValidIsoDateString, {
 	message: 'Must be a valid YYYY-MM-DD date',
@@ -95,6 +102,7 @@ export const projectRoutes = {
 				credentialPreviews: buildCredentialPreviews(c.credentials),
 				enabledModels: c.enabledModels ?? [],
 				customModels: c.customModels ?? [],
+				modelSettings: c.modelSettings ?? {},
 				baseUrl: c.baseUrl ?? null,
 				createdAt: c.createdAt,
 				updatedAt: c.updatedAt,
@@ -132,6 +140,7 @@ export const projectRoutes = {
 				credentials: z.record(z.string(), z.string()).optional(),
 				enabledModels: z.array(z.string()).optional(),
 				customModels: z.array(customModelMetadataSchema).optional(),
+				modelSettings: modelSettingsMapSchema.optional(),
 				baseUrl: z.string().url().optional().or(z.literal('')),
 			}),
 		)
@@ -163,6 +172,11 @@ export const projectRoutes = {
 
 			const enabledModels = input.enabledModels ?? [];
 			const customModels = (input.customModels ?? []).filter((m) => enabledModels.includes(m.id));
+			const modelSettings = input.modelSettings
+				? Object.fromEntries(
+						Object.entries(input.modelSettings).filter(([modelId]) => enabledModels.includes(modelId)),
+					)
+				: undefined;
 
 			const config = await llmConfigQueries.upsertProjectLlmConfig({
 				projectId: ctx.project.id,
@@ -171,6 +185,7 @@ export const projectRoutes = {
 				credentials: hasNewCredentials ? input.credentials! : undefined,
 				enabledModels,
 				customModels,
+				modelSettings,
 				baseUrl: input.baseUrl || null,
 			} as Parameters<typeof llmConfigQueries.upsertProjectLlmConfig>[0]);
 
@@ -181,6 +196,7 @@ export const projectRoutes = {
 				credentialPreviews: buildCredentialPreviews(config.credentials),
 				enabledModels: config.enabledModels ?? [],
 				customModels: config.customModels ?? [],
+				modelSettings: config.modelSettings ?? {},
 				baseUrl: config.baseUrl ?? null,
 			};
 		}),
@@ -773,7 +789,30 @@ export const projectRoutes = {
 		return { memoryEnabled };
 	}),
 
-	getProjectChats: adminProtectedProcedure
+	getDisplaySettings: projectProtectedProcedure.query(({ ctx }) => projectQueries.getDisplaySettings(ctx.project.id)),
+
+	updateDisplaySettings: adminProtectedProcedure
+		.input(
+			z.object({
+				dateFormat: z
+					.object({
+						preset: z.enum(DATE_FORMAT_PRESETS),
+						customFormat: z.string().trim().max(64).optional(),
+					})
+					.optional(),
+			}),
+		)
+		.mutation(async ({ ctx, input }) => {
+			const next = await projectQueries.updateDisplaySettings(ctx.project.id, input);
+			posthog.capture(ctx.user.id, PostHogEvent.ProjectDisplaySettingsUpdated, {
+				project_id: ctx.project.id,
+				date_format_preset: next.dateFormat?.preset,
+				date_format_has_custom_pattern: Boolean(next.dateFormat?.customFormat),
+			});
+			return next;
+		}),
+
+	getProjectChats: contextAdminProtectedProcedure
 		.input(
 			z.object({
 				page: z.number().int().min(0).default(0),
@@ -807,19 +846,22 @@ export const projectRoutes = {
 			return projectQueries.listProjectChats(ctx.project.id, input);
 		}),
 
-	getChatReplay: adminProtectedProcedure.input(z.object({ chatId: z.string() })).query(async ({ ctx, input }) => {
-		const projectId = await chatQueries.getChatProjectId(input.chatId);
-		if (!projectId || projectId !== ctx.project.id) {
-			throw new TRPCError({ code: 'NOT_FOUND', message: `Chat with id ${input.chatId} not found.` });
-		}
+	getChatReplay: contextAdminProtectedProcedure
+		.input(z.object({ chatId: z.string() }))
+		.query(async ({ ctx, input }) => {
+			const projectId = await chatQueries.getChatProjectId(input.chatId);
+			if (!projectId || projectId !== ctx.project.id) {
+				throw new TRPCError({ code: 'NOT_FOUND', message: `Chat with id ${input.chatId} not found.` });
+			}
 
-		const [chat] = await chatQueries.getChat(input.chatId, { includeFeedback: true });
-		if (!chat) {
-			throw new TRPCError({ code: 'NOT_FOUND', message: `Chat with id ${input.chatId} not found.` });
-		}
+			const [chat, ownerId] = await chatQueries.getChat(input.chatId, { includeFeedback: true });
+			if (!chat) {
+				throw new TRPCError({ code: 'NOT_FOUND', message: `Chat with id ${input.chatId} not found.` });
+			}
 
-		return chat;
-	}),
+			const ownerName = ownerId ? await userQueries.getUserName(ownerId) : null;
+			return { ...chat, ownerId: ownerId ?? null, ownerName };
+		}),
 
 	getEnvVars: adminProtectedProcedure.query(async ({ ctx }) => {
 		const requiredVars = ctx.project.path ? extractRequiredEnvVars(ctx.project.path) : [];

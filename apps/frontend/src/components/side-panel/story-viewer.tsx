@@ -20,9 +20,13 @@ import { useStoryViewerVersions } from './hooks/use-story-viewer-versions';
 import { useStoryViewerViewMode } from './hooks/use-story-viewer-view-mode';
 import type { Editor as TiptapEditor } from '@tiptap/react';
 import type { StoryCodeViewHandle } from './story-code-view';
+import { AssetAnalyticsDialog } from '@/components/asset-analytics-dialog';
 import { useSidePanel } from '@/contexts/side-panel';
+import { useTrackViewDuration } from '@/hooks/use-track-view-duration';
 import { ReadonlyAgentMessagesProvider, useOptionalAgentContext } from '@/contexts/agent.provider';
 import { StoryChartEditProvider } from '@/contexts/story-chart-edit';
+import { StoryTableEditProvider } from '@/contexts/story-table-edit';
+import { StoryEmbedDataProvider } from '@/contexts/story-embed-data';
 import { Spinner } from '@/components/ui/spinner';
 import { chatActivityStore } from '@/stores/chat-activity';
 import { trpc } from '@/main';
@@ -39,7 +43,7 @@ export function StoryViewer({ chatId, storySlug, isReadonlyMode: readonlyProp }:
 	const [isCodeDirty, setIsCodeDirty] = useState(false);
 	const [isCodeValid, setIsCodeValid] = useState(true);
 	const scrollContainerRef = useRef<HTMLDivElement | null>(null);
-	const { close: closeSidePanel, isReadonlyMode: contextReadonlyMode, shareId } = useSidePanel();
+	const { close: closeSidePanel, isReadonlyMode: contextReadonlyMode, shareId, shareType } = useSidePanel();
 	const isReadonlyMode = readonlyProp ?? contextReadonlyMode;
 	const { viewMode, setViewMode } = useStoryViewerViewMode();
 
@@ -65,6 +69,7 @@ export function StoryViewer({ chatId, storySlug, isReadonlyMode: readonlyProp }:
 	const resolvedStorySlug = draftStory?.id ?? storySlug;
 	const {
 		versions,
+		storyId,
 		storyTitle: storedTitle,
 		archivedAt,
 		currentVersion,
@@ -88,6 +93,14 @@ export function StoryViewer({ chatId, storySlug, isReadonlyMode: readonlyProp }:
 		storedTitle,
 		isReadonlyMode,
 	});
+	useTrackViewDuration({
+		assetType: 'story',
+		chatId,
+		storySlug: resolvedStorySlug,
+		storyId,
+		versionNumber: currentVersionNumber > 0 ? currentVersionNumber : undefined,
+	});
+
 	const { handleSave, handleRestore } = useStoryViewerVersionActions({
 		chatId,
 		storySlug: resolvedStorySlug,
@@ -103,6 +116,7 @@ export function StoryViewer({ chatId, storySlug, isReadonlyMode: readonlyProp }:
 		chatId,
 		storySlug: resolvedStorySlug,
 	});
+	const [isAnalyticsOpen, setIsAnalyticsOpen] = useState(false);
 	const {
 		isLive,
 		isLiveTextDynamic,
@@ -117,6 +131,7 @@ export function StoryViewer({ chatId, storySlug, isReadonlyMode: readonlyProp }:
 	const { handleEnlarge } = useStoryViewerEnlarge({ chatId, storySlug: resolvedStorySlug });
 
 	const handleOpenShare = useCallback(() => setIsShareDialogOpen(true), [setIsShareDialogOpen]);
+	const handleOpenAnalytics = useCallback(() => setIsAnalyticsOpen(true), []);
 	const handleOpenLiveSettings = useCallback(() => setIsLiveSettingsOpen(true), []);
 
 	const renderStoryViewer = useCallback(
@@ -162,7 +177,9 @@ export function StoryViewer({ chatId, storySlug, isReadonlyMode: readonlyProp }:
 				title={storyTitle}
 				chatId={chatId}
 				storySlug={resolvedStorySlug}
+				storyId={storyId}
 				shareId={shareId}
+				shareType={shareType}
 				allStories={allStories}
 				onSwitchStory={switchStory}
 				viewMode={viewMode}
@@ -176,6 +193,7 @@ export function StoryViewer({ chatId, storySlug, isReadonlyMode: readonlyProp }:
 				onRestore={handleRestore}
 				onSave={handleSave}
 				onShare={handleOpenShare}
+				onOpenAnalytics={handleOpenAnalytics}
 				onEnlarge={handleEnlarge}
 				isShared={isShared}
 				isAgentRunning={isAgentRunning}
@@ -213,7 +231,9 @@ export function StoryViewer({ chatId, storySlug, isReadonlyMode: readonlyProp }:
 							/>
 						)
 					) : viewMode === 'edit' ? (
-						<StoryEditor code={storyCode} editorRef={tiptapEditorRef} onSave={handleSave} />
+						<StoryEmbedDataProvider value={queryData ?? null}>
+							<StoryEditor code={storyCode} editorRef={tiptapEditorRef} onSave={handleSave} />
+						</StoryEmbedDataProvider>
 					) : (
 						<StoryCodeView
 							code={storyCode}
@@ -232,6 +252,14 @@ export function StoryViewer({ chatId, storySlug, isReadonlyMode: readonlyProp }:
 				onOpenChange={setIsShareDialogOpen}
 				chatId={chatId}
 				storySlug={resolvedStorySlug}
+			/>
+
+			<AssetAnalyticsDialog
+				open={isAnalyticsOpen}
+				onOpenChange={setIsAnalyticsOpen}
+				assetType='story'
+				chatId={chatId}
+				storyId={storyId ?? undefined}
 			/>
 
 			<LiveStorySettingsDialog
@@ -269,7 +297,14 @@ function renderWithEditProvider(
 			storyTitle={params.storyTitle}
 			storyCode={params.storyCode}
 		>
-			{children}
+			<StoryTableEditProvider
+				chatId={params.chatId}
+				storySlug={params.storySlug}
+				storyTitle={params.storyTitle}
+				storyCode={params.storyCode}
+			>
+				{children}
+			</StoryTableEditProvider>
 		</StoryChartEditProvider>
 	);
 }

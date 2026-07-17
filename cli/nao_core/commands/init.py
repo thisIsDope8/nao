@@ -6,6 +6,8 @@ from typing import Annotated
 
 from cyclopts import Parameter
 
+from nao_core import __version__
+from nao_core.branding import should_show_banner
 from nao_core.config import NaoConfig, NaoConfigError
 from nao_core.config.exceptions import InitError
 from nao_core.tracking import track_command
@@ -31,6 +33,58 @@ class ProjectExistsError(InitError):
 class CreatedFile:
     path: Path
     content: str | None
+
+
+_PROMPTS_README = """# System prompts
+
+Customize the system prompt nao uses on each bot surface by adding a markdown
+file here. These files are versioned with the rest of your context, so prompt
+changes stay reviewable in pull requests just like `RULES.md`.
+
+## Files
+
+One file per surface:
+
+- `system.md` — applies to every surface (nao web Bot, Slack, Teams, …).
+- `slack.md` — Slack Bot only.
+- `teams.md` — Microsoft Teams Bot only.
+- `telegram.md` — Telegram Bot only.
+- `whatsapp.md` — WhatsApp Bot only.
+- `automation.md` — scheduled automations only.
+
+A surface-specific file (e.g. `slack.md`) takes precedence over `system.md`.
+Delete a file to fall back to nao's built-in prompt for that surface.
+
+## Replace vs. extend: `{{ nao_prompt }}`
+
+By default a prompt file **fully replaces** nao's built-in prompt for that
+surface. If instead you want to **keep** the default and only add to it, include
+the `{{ nao_prompt }}` placeholder somewhere in the file: it is replaced at
+runtime with nao's default prompt for the corresponding surface (in `slack.md`
+it expands to the default Slack prompt, in `system.md` to the web prompt, …).
+
+Example `slack.md` that extends the default instead of overriding it:
+
+```md
+{{ nao_prompt }}
+
+## House rules
+- Always answer with amounts in EUR.
+- Keep responses to 5 bullet points or fewer.
+```
+
+Without `{{ nao_prompt }}`, the file content becomes the entire prompt.
+"""
+
+_SLACK_PROMPT_EXAMPLE = """<!--
+  Slack Bot system prompt. The placeholder below is replaced at runtime with
+  nao's built-in Slack prompt so you can extend the default instead of replacing
+  it entirely. Add your own instructions around it, remove it to fully override,
+  or delete this file to use nao's default Slack prompt unchanged. See README.md.
+-->
+
+{{ nao_prompt }}
+"""
 
 
 def setup_project_name(
@@ -112,11 +166,14 @@ def create_empty_structure(project_path: Path) -> tuple[list[str], list[CreatedF
         "agent/tools",
         "agent/mcps",
         "agent/skills",
+        "agent/prompts",
         "tests",
     ]
 
     FILES = [
         CreatedFile(path=Path("RULES.md"), content=None),
+        CreatedFile(path=Path("agent/prompts/README.md"), content=_PROMPTS_README),
+        CreatedFile(path=Path("agent/prompts/slack.md"), content=_SLACK_PROMPT_EXAMPLE),
         CreatedFile(path=Path(".naoignore"), content="templates/\n*.j2\ntests/\n"),
         CreatedFile(
             path=Path("tests/test_example.yml"),
@@ -214,7 +271,10 @@ def init(
         config and without `--name`, the current directory name is used and the
         project is initialized in place.
     """
-    UI.info("\n🚀 nao project initialization\n")
+    if should_show_banner():
+        UI.banner(__version__)
+    else:
+        UI.info("\n🚀 nao project initialization\n")
 
     project_path: Path | None = None
     cleanup_on_abort = False

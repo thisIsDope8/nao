@@ -1,3 +1,5 @@
+import './instrumentation';
+
 import formbody from '@fastify/formbody';
 import multipart from '@fastify/multipart';
 import fastifyStatic from '@fastify/static';
@@ -19,17 +21,22 @@ import {
 import { LOG_CLEANUP_JOB_NAME, logCleanupHandler, runLogCleanup } from './handlers/log-cleanup.handler';
 import { MCP_QUERY_DATA_CLEANUP_JOB_NAME, mcpQueryDataCleanupHandler } from './handlers/mcp-query-data-cleanup.handler';
 import { STORY_REFRESH_JOB_NAME, storyRefreshHandler } from './handlers/story-refresh.handler';
+import { flushTelemetry } from './instrumentation';
 import { mcpServerRoutes } from './mcp/routes';
 import { ensureOrganizationSetup } from './queries/organization.queries';
 import { agentRoutes } from './routes/agent';
+import { analyticsRoutes } from './routes/analytics';
 import { authRoutes } from './routes/auth';
 import { authErrorRedirectRoutes } from './routes/auth-error-redirect';
+import { automationWebhookRoutes } from './routes/automation-webhook';
 import { brandingRoutes } from './routes/branding';
 import { chartRoutes } from './routes/chart';
 import { deployRoutes } from './routes/deploy';
 import { embedStoryDownloadRoutes } from './routes/embed-story-download';
 import { githubRoutes } from './routes/github';
+import { gitlabRoutes } from './routes/gitlab';
 import { imageRoutes } from './routes/image';
+import { mcpOAuthRoutes } from './routes/mcp-oauth';
 import { slackRoutes } from './routes/slack';
 import { teamsRoutes } from './routes/teams';
 import { telegramRoutes } from './routes/telegram';
@@ -148,6 +155,10 @@ app.register(agentRoutes, {
 	prefix: '/api/agent',
 });
 
+app.register(analyticsRoutes, {
+	prefix: '/api/analytics',
+});
+
 app.register(testRoutes, {
 	prefix: '/api/test',
 });
@@ -196,8 +207,20 @@ app.register(deployRoutes, {
 	prefix: '/api',
 });
 
+app.register(automationWebhookRoutes, {
+	prefix: '/api',
+});
+
 app.register(githubRoutes, {
 	prefix: '/api/github',
+});
+
+app.register(gitlabRoutes, {
+	prefix: '/api/gitlab',
+});
+
+app.register(mcpOAuthRoutes, {
+	prefix: '/api/mcp-oauth',
 });
 
 app.register(mcpServerRoutes, {
@@ -289,16 +312,21 @@ if (staticRoot) {
 		prefix: '/',
 		wildcard: false,
 	});
-
-	// SPA fallback: serve index.html for all non-API routes
-	app.setNotFoundHandler((request, reply) => {
-		if (isReservedBackendPath(request.url)) {
-			reply.status(404).send({ error: 'Not found' });
-		} else {
-			reply.sendFile('index.html');
-		}
-	});
 }
+
+// SPA fallback: serve index.html for all non-API routes.
+// In dev mode without a built frontend, redirect to the Vite dev server.
+app.setNotFoundHandler((request, reply) => {
+	if (isReservedBackendPath(request.url)) {
+		reply.status(404).send({ error: 'Not found' });
+	} else if (staticRoot) {
+		reply.sendFile('index.html');
+	} else if (isDev) {
+		reply.redirect(`http://localhost:3000${request.url}`);
+	} else {
+		reply.status(404).send({ error: 'Not found' });
+	}
+});
 
 export const startServer = async (opts: { port: number; host: string }) => {
 	if (isCloud) {
@@ -349,6 +377,7 @@ export const startServer = async (opts: { port: number; host: string }) => {
 	posthog.capture(undefined, PostHogEvent.ServerStarted, { ...opts, address });
 
 	const handleShutdown = async () => {
+		await flushTelemetry();
 		await posthog.shutdown();
 		process.exit(0);
 	};

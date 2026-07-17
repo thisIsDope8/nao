@@ -1,6 +1,21 @@
 import type { McpChartEmbedStoredConfig } from '@nao/shared';
-import type { CitationData, LlmProvider } from '@nao/shared/types';
-import { BUDGET_PERIODS, FOLDER_SYSTEM_TYPE, FOLDER_VISIBILITY, SHARE_VISIBILITY, USER_ROLES } from '@nao/shared/types';
+import type { DisplaySettings } from '@nao/shared/date';
+import type {
+	AnalyticsEventMetadata,
+	CitationData,
+	LlmProvider,
+	RepoProvider,
+	UserPreferences,
+} from '@nao/shared/types';
+import {
+	ANALYTICS_ASSET_TYPES,
+	ANALYTICS_EVENT_TYPES,
+	BUDGET_PERIODS,
+	FOLDER_SYSTEM_TYPE,
+	FOLDER_VISIBILITY,
+	SHARE_VISIBILITY,
+	USER_ROLES,
+} from '@nao/shared/types';
 import { type ProviderMetadata } from 'ai';
 import { sql } from 'drizzle-orm';
 import {
@@ -33,7 +48,7 @@ import {
 	RecommendationImpact,
 	RecommendationInsight,
 } from '../types/context-recommendation';
-import { LLM_INFERENCE_TYPES } from '../types/llm';
+import { LLM_INFERENCE_TYPES, type ModelSettingsMap } from '../types/llm';
 import { LOG_LEVELS, LOG_SOURCES } from '../types/log';
 import { McpEndpointSettings } from '../types/mcp-endpoint';
 import { MEMORY_CATEGORIES } from '../types/memory';
@@ -50,6 +65,19 @@ export const user = pgTable('user', {
 	memoryEnabled: boolean('memory_enabled').default(true).notNull(),
 	messagingProviderCode: text('messaging_provider_code').unique(),
 	githubAccessToken: text('github_access_token'),
+	gitlabAccessToken: text('gitlab_access_token'),
+	createdAt: timestamp('created_at').defaultNow().notNull(),
+	updatedAt: timestamp('updated_at')
+		.defaultNow()
+		.$onUpdate(() => /* @__PURE__ */ new Date())
+		.notNull(),
+});
+
+export const userPreference = pgTable('user_preference', {
+	userId: text('user_id')
+		.primaryKey()
+		.references(() => user.id, { onDelete: 'cascade' }),
+	preferences: jsonb('preferences').$type<UserPreferences>().notNull().default({}),
 	createdAt: timestamp('created_at').defaultNow().notNull(),
 	updatedAt: timestamp('updated_at')
 		.defaultNow()
@@ -162,6 +190,8 @@ export const project = pgTable(
 		agentSettings: jsonb('agent_settings').$type<AgentSettings>(),
 		enabledMcpTools: jsonb('enabled_tools').$type<string[]>().notNull().default([]),
 		knownMcpServers: jsonb('known_mcp_servers').$type<string[]>().notNull().default([]),
+		disabledMcpServers: jsonb('disabled_mcp_servers').$type<string[]>().notNull().default([]),
+		disabledMcpTools: jsonb('disabled_mcp_tools').$type<string[]>().notNull().default([]),
 
 		envVars: jsonb('env_vars').$type<Record<string, string>>().notNull().default({}),
 
@@ -170,6 +200,7 @@ export const project = pgTable(
 		telegramSettings: jsonb('telegram_settings').$type<TelegramSettings>(),
 		whatsappSettings: jsonb('whatsapp_settings').$type<WhatsappSettings>(),
 		mcpEndpointSettings: jsonb('mcp_endpoint_settings').$type<McpEndpointSettings>(),
+		displaySettings: jsonb('display_settings').$type<DisplaySettings>(),
 
 		createdAt: timestamp('created_at').defaultNow().notNull(),
 		updatedAt: timestamp('updated_at')
@@ -256,6 +287,7 @@ export const chatMessage = pgTable(
 		llmProvider: text('llm_provider').$type<LlmProvider>(),
 		llmModelId: text('llm_model_id'),
 		supersededAt: timestamp('superseded_at'),
+		versionGroupId: text('version_group_id'),
 		source: text('source', { enum: MESSAGE_SOURCES }),
 		isForked: boolean('isForked'),
 		citation: jsonb('citation').$type<CitationData>(),
@@ -274,6 +306,7 @@ export const chatMessage = pgTable(
 	(table) => [
 		index('chat_message_chatId_idx').on(table.chatId),
 		index('chat_message_createdAt_idx').on(table.createdAt),
+		index('chat_message_versionGroupId_idx').on(table.versionGroupId),
 	],
 );
 
@@ -394,6 +427,7 @@ export const projectLlmConfig = pgTable(
 			>()
 			.default([])
 			.notNull(),
+		modelSettings: jsonb('model_settings').$type<ModelSettingsMap>().default({}).notNull(),
 		baseUrl: text('base_url'),
 		createdAt: timestamp('created_at').defaultNow().notNull(),
 		updatedAt: timestamp('updated_at')
@@ -543,6 +577,7 @@ export const automation = pgTable(
 		mcpEnabled: boolean('mcp_enabled').default(true).notNull(),
 		mcpServers: jsonb('mcp_servers').$type<string[]>(),
 		integrations: jsonb('integrations').$type<AutomationIntegrationConfig>().notNull().default({}),
+		webhookEnabled: boolean('webhook_enabled').default(false).notNull(),
 		createdAt: timestamp('created_at').defaultNow().notNull(),
 		updatedAt: timestamp('updated_at')
 			.defaultNow()
@@ -619,6 +654,7 @@ export const contextRecommendationConfig = pgTable('context_recommendation_confi
 	frequency: text('frequency', { enum: CONTEXT_RECOMMENDATION_FREQUENCIES }),
 	customSystemPromptInstructions: text('custom_system_prompt_instructions'),
 	repoFullName: text('repo_full_name'),
+	repoProvider: text('repo_provider').$type<RepoProvider>(),
 	autoCreatePrs: boolean('auto_create_prs'),
 	maxAutoPrsPerRun: integer('max_auto_prs_per_run'),
 	createdAt: timestamp('created_at').defaultNow().notNull(),
@@ -1132,6 +1168,7 @@ export const brandingConfig = pgTable('branding_config', {
 	logoMediaType: text('logo_media_type'),
 	faviconData: text('favicon_data'),
 	faviconMediaType: text('favicon_media_type'),
+	brandColor: text('brand_color'),
 	updatedAt: timestamp('updated_at')
 		.defaultNow()
 		.$onUpdate(() => /* @__PURE__ */ new Date())
@@ -1213,4 +1250,85 @@ export const storyFolderItem = pgTable(
 			.references(() => storyFolder.id, { onDelete: 'cascade' }),
 	},
 	(t) => [index('story_folder_item_folderId_idx').on(t.folderId)],
+);
+
+export const analyticsEvent = pgTable(
+	'analytics_event',
+	{
+		id: text('id')
+			.$defaultFn(() => crypto.randomUUID())
+			.primaryKey(),
+		projectId: text('project_id')
+			.notNull()
+			.references(() => project.id, { onDelete: 'cascade' }),
+		type: text('type', { enum: ANALYTICS_EVENT_TYPES }).notNull(),
+		assetType: text('asset_type', { enum: ANALYTICS_ASSET_TYPES }).notNull(),
+		actorUserId: text('actor_user_id').references(() => user.id, { onDelete: 'set null' }),
+		chatId: text('chat_id').references(() => chat.id, { onDelete: 'cascade' }),
+		storyId: text('story_id').references(() => story.id, { onDelete: 'cascade' }),
+		sharedChatId: text('shared_chat_id').references(() => sharedChat.id, { onDelete: 'set null' }),
+		sharedStoryId: text('shared_story_id').references(() => sharedStory.id, { onDelete: 'set null' }),
+		metadata: jsonb('metadata').$type<AnalyticsEventMetadata>(),
+		createdAt: timestamp('created_at').defaultNow().notNull(),
+	},
+	(t) => [
+		index('analytics_event_projectId_idx').on(t.projectId),
+		index('analytics_event_chatId_idx').on(t.chatId),
+		index('analytics_event_storyId_idx').on(t.storyId),
+		index('analytics_event_sharedChatId_idx').on(t.sharedChatId),
+		index('analytics_event_sharedStoryId_idx').on(t.sharedStoryId),
+		index('analytics_event_actorUserId_idx').on(t.actorUserId),
+		index('analytics_event_type_createdAt_idx').on(t.type, t.createdAt),
+		check(
+			'analytics_event_asset_id_required',
+			sql`CASE WHEN ${t.assetType} = 'chat' THEN ${t.chatId} IS NOT NULL WHEN ${t.assetType} = 'story' THEN ${t.storyId} IS NOT NULL ELSE TRUE END`,
+		),
+	],
+);
+
+export const mcpOAuthClient = pgTable(
+	'mcp_oauth_client',
+	{
+		projectId: text('project_id')
+			.notNull()
+			.references(() => project.id, { onDelete: 'cascade' }),
+		serverName: text('server_name').notNull(),
+		clientId: text('client_id').notNull(),
+		clientSecret: text('client_secret'),
+		clientData: text('client_data'),
+		discoveryUserId: text('discovery_user_id').references(() => user.id, { onDelete: 'set null' }),
+		createdAt: timestamp('created_at').defaultNow().notNull(),
+		updatedAt: timestamp('updated_at')
+			.defaultNow()
+			.notNull()
+			.$onUpdate(() => /* @__PURE__ */ new Date()),
+	},
+	(t) => [primaryKey({ columns: [t.projectId, t.serverName] })],
+);
+
+export const mcpUserToken = pgTable(
+	'mcp_user_token',
+	{
+		userId: text('user_id')
+			.notNull()
+			.references(() => user.id, { onDelete: 'cascade' }),
+		projectId: text('project_id')
+			.notNull()
+			.references(() => project.id, { onDelete: 'cascade' }),
+		serverName: text('server_name').notNull(),
+		accessToken: text('access_token'),
+		refreshToken: text('refresh_token'),
+		expiresAt: timestamp('expires_at'),
+		scope: text('scope'),
+		codeVerifier: text('code_verifier'),
+		createdAt: timestamp('created_at').defaultNow().notNull(),
+		updatedAt: timestamp('updated_at')
+			.defaultNow()
+			.notNull()
+			.$onUpdate(() => /* @__PURE__ */ new Date()),
+	},
+	(t) => [
+		primaryKey({ columns: [t.userId, t.projectId, t.serverName] }),
+		index('mcp_user_token_project_server_idx').on(t.projectId, t.serverName),
+	],
 );

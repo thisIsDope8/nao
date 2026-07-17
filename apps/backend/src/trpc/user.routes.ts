@@ -1,9 +1,12 @@
+import { TOOL_CALL_DENSITIES } from '@nao/shared/types';
 import { TRPCError } from '@trpc/server';
 import { z } from 'zod/v4';
 
+import { env } from '../env';
 import * as memoryQueries from '../queries/memory';
 import * as projectQueries from '../queries/project.queries';
 import * as userQueries from '../queries/user.queries';
+import * as userPreferenceQueries from '../queries/user-preference.queries';
 import { addTeamMember } from '../services/team-member';
 import { buildUserAddedEmail } from '../utils/email-builders';
 import { adminProtectedProcedure, projectProtectedProcedure, protectedProcedure, publicProcedure } from './trpc';
@@ -30,7 +33,7 @@ export const userRoutes = {
 			z.object({
 				userId: z.string(),
 				name: z.string().optional(),
-				newRole: z.enum(['user', 'viewer', 'admin']).optional(),
+				newRole: z.enum(['user', 'viewer', 'admin', 'context_admin']).optional(),
 			}),
 		)
 		.mutation(async ({ input, ctx }) => {
@@ -70,10 +73,24 @@ export const userRoutes = {
 				name: input.name,
 				checkExisting: async (userId) => !!(await projectQueries.getProjectMember(projectId, userId)),
 				addMember: async (userId) => {
-					await projectQueries.addProjectMember({ userId, projectId, role: 'user' });
+					await projectQueries.addProjectMember({ userId, projectId, role: env.DEFAULT_USER_ROLE });
 				},
 				buildEmail: (user, password) => buildUserAddedEmail(user, ctx.project.name, 'project', password),
 			});
+		}),
+
+	getPreferences: protectedProcedure.query(async ({ ctx }) => {
+		return userPreferenceQueries.getUserPreferences(ctx.user.id);
+	}),
+
+	updatePreferences: protectedProcedure
+		.input(
+			z.object({
+				toolCallDensity: z.enum(TOOL_CALL_DENSITIES).optional(),
+			}),
+		)
+		.mutation(async ({ input, ctx }) => {
+			return userPreferenceQueries.updateUserPreferences(ctx.user.id, input);
 		}),
 
 	getMemorySettings: protectedProcedure.query(async ({ ctx }) => {
