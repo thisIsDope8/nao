@@ -75,4 +75,4 @@ services:
             - postgres
 
 volumes:
-    nao_postgres_data
+    nao_postgres_data:
