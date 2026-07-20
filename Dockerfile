@@ -37,20 +37,17 @@ COPY apps/backend ./apps/backend
 COPY apps/shared ./apps/shared
 
 WORKDIR /app/apps/frontend
+ENV NODE_OPTIONS=--max-old-space-size=8192
 RUN npx vite build
 
 # =============================================================================
 # STAGE 4: Python/FastAPI builder
 # =============================================================================
 FROM python:3.12-slim AS python-builder
-
-# Optional CLI version override. When set, both pyproject.toml and __init__.py
-# are rewritten so the installed nao-core package reports this version.
-ARG NAO_CLI_VERSION=
-
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     gcc \
     unixodbc-dev \
@@ -63,13 +60,7 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 COPY cli ./cli
 
 WORKDIR /app/cli
-
-RUN if [ -n "$NAO_CLI_VERSION" ]; then \
-        sed -i "s/^version = \".*\"/version = \"$NAO_CLI_VERSION\"/" pyproject.toml && \
-        sed -i "s/^__version__ = \".*\"/__version__ = \"$NAO_CLI_VERSION\"/" nao_core/__init__.py && \
-        echo "Set nao-core version to $NAO_CLI_VERSION"; \
-    fi
-
+ENV UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system '.[all]'
 
@@ -84,15 +75,16 @@ ARG APP_BUILD_DATE=
 
 # Install only runtime system packages — Node.js and Bun are copied from the
 # base stage below, avoiding the slow nodesource.com setup + npm install.
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     chromium \
     curl \
     fontconfig \
     fonts-dejavu-core \
     git \
+    libmariadb3 \
     libpq5 \
-    openssh-client \
     supervisor \
     unixodbc \
     && rm -rf /var/lib/apt/lists/*
@@ -124,12 +116,6 @@ COPY --from=deps --chown=nao:nao /app/node_modules ./node_modules
 COPY --chown=nao:nao apps/backend ./apps/backend
 COPY --chown=nao:nao apps/shared ./apps/shared
 
-# Lock down the license public key for production: strip the dev override
-# branch from apps/backend/src/services/license-public-key.ts so the
-# NAO_LICENSE_PUBLIC_KEY env var is a no-op in production images.
-RUN --mount=type=bind,source=docker/lock-license-key.mjs,target=/tmp/lock-license-key.mjs \
-    node /tmp/lock-license-key.mjs apps/backend/src/services/license-public-key.ts
-
 # Copy frontend build output
 COPY --from=frontend-builder --chown=nao:nao /app/apps/frontend/dist ./apps/frontend/dist
 
@@ -146,7 +132,7 @@ RUN chmod +x /entrypoint.sh
 # Environment variables
 ENV MODE=prod
 ENV NODE_ENV=production
-ENV BETTER_AUTH_URL=http://localhost:5005
+ENV BETTER_AUTH_URL=http://10.132.134.98:5005
 ENV FASTAPI_PORT=8005
 ENV APP_VERSION=$APP_VERSION
 ENV APP_COMMIT=$APP_COMMIT
@@ -154,6 +140,12 @@ ENV APP_BUILD_DATE=$APP_BUILD_DATE
 ENV NAO_DEFAULT_PROJECT_PATH=/app/example
 ENV NAO_CONTEXT_SOURCE=local
 ENV DOCKER=1
+ENV HTTP_PROXY=http://proxy.nioint.com:8080
+ENV HTTPS_PROXY=http://proxy.nioint.com:8080
+ENV http_proxy=http://proxy.nioint.com:8080
+ENV https_proxy=http://proxy.nioint.com:8080
+ENV NO_PROXY=localhost,127.0.0.1,::1
+ENV no_proxy=localhost,127.0.0.1,::1
 
 EXPOSE 5005
 

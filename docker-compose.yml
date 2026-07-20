@@ -9,7 +9,7 @@ services:
             POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nao}
             POSTGRES_DB: ${POSTGRES_DB:-nao}
         ports:
-            - '5432:5432'
+            - '15432:5432'
         volumes:
             - nao_postgres_data:/var/lib/postgresql/data
         healthcheck:
@@ -33,9 +33,15 @@ services:
             # =================================================================
             # Authentication & API Keys
             # =================================================================
+            BETTER_AUTH_URL: ${BETTER_AUTH_URL:-http://10.132.134.98:5005}
             BETTER_AUTH_SECRET: ${BETTER_AUTH_SECRET}
             OPENAI_API_KEY: ${OPENAI_API_KEY}
             ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY}
+
+            LANGFUSE_ENABLED: true
+            LANGFUSE_SECRET_KEY: "sk-lf-1bf8509c-2409-4de9-8e8e-e34050f03b74"
+            LANGFUSE_PUBLIC_KEY: "pk-lf-9282ed5f-8962-4611-b61a-c73fa7d0218b"
+            LANGFUSE_BASE_URL: "https://uolf.nioint.com"
 
             # =================================================================
             # Database for nao chat history
@@ -69,4 +75,4 @@ services:
             - postgres
 
 volumes:
-    nao_postgres_data:
+    nao_postgres_data
