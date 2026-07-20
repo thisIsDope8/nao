@@ -56,6 +56,8 @@ services:
             NAO_CONTEXT_SOURCE: local
             NAO_DEFAULT_PROJECT_PATH: /app/example
 
+            BETA_CONTEXT_RECOMMENDATIONS_ENABLED: true
+
             # Option B: Git mode - uncomment and configure these instead:
             # NAO_CONTEXT_SOURCE: git
             # NAO_CONTEXT_GIT_URL: https://github.com/your-org/your-nao-context.git
