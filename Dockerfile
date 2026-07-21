@@ -55,12 +55,12 @@ RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g; s|security.debian.o
     libmariadb-dev \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+ENV UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
+RUN pip install --no-cache-dir uv -i "${UV_INDEX_URL}"
 
 COPY cli ./cli
 
 WORKDIR /app/cli
-ENV UV_INDEX_URL=https://mirrors.aliyun.com/pypi/simple/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv pip install --system '.[all]'
 
@@ -96,8 +96,6 @@ RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
     && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx \
     && ln -sf ../lib/node_modules/bun/bin/bun.exe /usr/local/bin/bun \
     && ln -sf ../lib/node_modules/bun/bin/bunx.exe /usr/local/bin/bunx
-
-COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
 
 # Create non-root user and required directories
 RUN useradd -m -s /bin/bash nao \
