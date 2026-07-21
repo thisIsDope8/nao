@@ -279,9 +279,15 @@ export class AgentService {
 		const configs = await llmConfigQueries.getProjectLlmConfigs(projectId);
 		const config = configs.at(0);
 		if (config) {
+			const provider = config.provider as LlmProvider;
+			const enabledModels = config.enabledModels ?? [];
+			const modelId = enabledModels[0] ?? getDefaultModelId(provider);
+			if (!modelId) {
+				throw new HandlerError('BAD_REQUEST', `No model configured for provider ${provider}`);
+			}
 			return {
-				provider: config.provider,
-				modelId: getDefaultModelId(config.provider),
+				provider,
+				modelId,
 			};
 		}
 

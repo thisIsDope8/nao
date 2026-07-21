@@ -358,23 +358,9 @@ export const PROVIDER_META: ProviderMetaMap = {
 		},
 		envVar: 'OPENAI_COMPATIBLE_API_KEY',
 		baseUrlEnvVar: 'OPENAI_COMPATIBLE_BASE_URL',
-		extractorModelId: 'gpt-oss-20b',
-		summaryModelId: 'gpt-oss-20b',
-		models: [
-			{
-				id: 'gpt-oss-20b',
-				name: 'GPT OSS 20B',
-				default: true,
-			},
-			{
-				id: 'qwen3-8b',
-				name: 'Qwen 3 8B',
-			},
-			{
-				id: 'llama-3.1-8b-instruct',
-				name: 'Llama 3.1 8B Instruct',
-			},
-		],
+		extractorModelId: '',
+		summaryModelId: '',
+		models: [],
 	},
 	google: {
 		auth: { apiKey: 'required' },
